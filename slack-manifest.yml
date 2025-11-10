@@ -9,7 +9,7 @@ features:
     always_online: true
   slash_commands:
     - command: /capacity-ping
-      url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+      url: https://yi5vs7ozb5tggptffbm67iv43e0wysgo.lambda-url.eu-central-1.on.aws/slack/events
       description: Trigger the capacity reminder manually
       usage_hint: "/capacity-ping"
       should_escape: false
@@ -28,13 +28,13 @@ oauth_config:
 
 settings:
   event_subscriptions:
-    request_url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+    request_url: https://yi5vs7ozb5tggptffbm67iv43e0wysgo.lambda-url.eu-central-1.on.aws/slack/events
     bot_events:
       - app_mention
       - message.im
   interactivity:
     is_enabled: true
-    request_url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+    request_url: https://yi5vs7ozb5tggptffbm67iv43e0wysgo.lambda-url.eu-central-1.on.aws/slack/events
   socket_mode_enabled: false
   org_deploy_enabled: false
   token_rotation_enabled: false
