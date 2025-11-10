@@ -1157,19 +1157,10 @@ if (app) {
 
     if (projectIndex + 1 < projects.length) {
       metadata.projectIndex = projectIndex + 1;
-      await ack();
-      try {
-        await slackClient.views.update({
-          view_id: view.id,
-          view: buildStepThreeView(metadata),
-        });
-      } catch (error) {
-        logger?.error?.(error);
-        await notifyUser(
-          metadata.userId,
-          'Could not load the next project. Please try again later.'
-        );
-      }
+      await ack({
+        response_action: 'update',
+        view: buildStepThreeView(metadata),
+      });
       return;
     }
 
