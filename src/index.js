@@ -1101,6 +1101,8 @@ if (app) {
     if (metadata.projects?.length) {
       metadata.projectHours = metadata.projectHours || {};
       metadata.projectIndex = 0;
+      metadata.projectHours = metadata.projectHours || {};
+      metadata.projectIndex = 0;
       await ack({
         response_action: 'push',
         view: buildStepThreeView(metadata),
@@ -1156,7 +1158,7 @@ if (app) {
     if (projectIndex + 1 < projects.length) {
       metadata.projectIndex = projectIndex + 1;
       await ack({
-        response_action: 'push',
+        response_action: 'update',
         view: buildStepThreeView(metadata),
       });
       return;
