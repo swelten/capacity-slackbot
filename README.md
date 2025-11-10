@@ -1,35 +1,44 @@
 ## capacity-slackbot
 
-capacity-slackbot is an AWS Lambda Slack bot that posts a weekly reminder every Monday at 10:00 (configured in EventBridge) asking for each team member's capacity for the previous week. The bot automatically sends each active (non-bot) user a direct message so you can track capacity per person. Users reply with a number (e.g. `68%`), the bot acknowledges the entry, and it optionally mirrors the result into a summary channel.
+capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to submit their weekly capacity and writes the answers into Notion. Each reminder DM contains a “Kapazität melden” button that opens a guided modal. The modal:
+
+1. Auto-fills the **Name** property with the current ISO calendar week (`KW XX`) and stores the Monday–Sunday range in the `Woche` date field.
+2. Lets the user choose themselves from the Notion people list (`Person`) and enter contractual hours (`Verfügbar`).
+3. Collects hours for the mandatory business areas (Marketing, Management, Akquise, Finanzen, HR, Study) based on a multi-select choice.
+4. Asks whether the user is a developer; if yes, it requests hours for `Dev-DeepWaive`, `Dev-General`, `Dev-Platform`, and `Dev-Website`.
+5. Offers a multi-select of all projects from the “Alle Projekte Database” and captures the worked hours per project. The first project is saved on the base entry, further projects create additional `KW XX (1)`, `KW XX (2)`, … pages that point to the same week and person.
 
 ### Repository structure
 
 - `Dockerfile` – builds a Lambda container image (`public.ecr.aws/lambda/nodejs:20`) and executes `src/index.handler`.
-- `src/index.js` – Lambda handler that serves both Slack event callbacks (via Bolt) and EventBridge schedule invocations.
-- `slack-manifest.yml` – Slack app configuration (slash command `/capacity-ping`, event subscriptions, interactivity endpoints) for capacity-slackbot.
-- `workflows/deploy.yml` – GitHub Actions workflow that builds and pushes the capacity-slackbot container image into ECR.
+- `src/index.js` – Lambda entrypoint containing Slack Bolt handlers, Notion helpers, the modal workflow, and the EventBridge scheduler hook.
+- `slack-manifest.yml` – Slack app definition (`/capacity-ping` slash command, message actions, interactivity URLs) that must point to the deployed Lambda Function URL.
+- `workflows/deploy.yml` – GitHub Actions workflow that validates sources and pushes the Lambda container to ECR.
 
 ### Environment variables
 
 | Variable | Description |
 | --- | --- |
-| `SLACK_SIGNING_SECRET` | Slack app signing secret for verifying incoming requests. |
-| `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) used for posting messages and responding to users. |
-| `CAPACITY_TARGETS` | (Optional) Comma-separated list of Slack IDs. Use channel IDs (`C…`/`G…`) or user IDs (`U…`) to limit who receives prompts. When omitted, the bot automatically DM’s every active (non-bot) user in the workspace using the `users:read` scope. |
-| `CAPACITY_SUMMARY_CHANNEL` | Optional channel ID that receives a summary message for each reported capacity. |
+| `SLACK_SIGNING_SECRET` | Slack signing secret used by Bolt’s `AwsLambdaReceiver`. |
+| `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) with `chat:write`, `commands`, `im:*`, `channels:read`, `users:read`. |
+| `CAPACITY_TARGETS` | *(Optional)* Comma-separated Slack IDs (user/channel) to limit who receives the Monday DM. Omit to ping every active human in the workspace. |
+| `CAPACITY_TIMEZONE` | *(Optional)* IANA timezone used when writing the Monday–Sunday range to Notion. Defaults to `Europe/Berlin`. |
+| `NOTION_API_TOKEN` | Internal integration token with access to both Notion databases. |
+| `NOTION_CAPACITY_DB_ID` | Database ID of “Kapazitätsplan Alle Database (NEU)” (where weekly entries are stored). |
+| `NOTION_PROJECTS_DB_ID` | Database ID of “Alle Projekte Database” used to populate the project multi-select. |
 
-### How per-user prompts work
+> ⚠️ The Notion databases must be shared with the integration connected to `NOTION_API_TOKEN`.
 
-- During each scheduled run the Lambda function calls `users.list` to collect all workspace members.
-- Deleted users, bots, and `USLACKBOT` are filtered out so only real, active teammates receive a prompt.
-- For every target user the bot opens/uses the existing DM and posts the weekly capacity reminder.
-- You can override this behavior by specifying `CAPACITY_TARGETS` to restrict the recipients to a subset of IDs (channels or individuals).
+### Slack interactions
+
+- **Scheduled DM** – Every Monday at 10:00 (via EventBridge) the bot DM’s each target user with the reminder text and button. Clicking the button opens the modal.
+- **`/capacity-ping` slash command** – Without arguments it opens the same modal for the command user (handy for ad-hoc edits). Run `/capacity-ping broadcast` to trigger the reminder DM immediately for everyone (mirrors the EventBridge run).
+- **Modal flow** – The modal is broken into up to three steps (base data → task/category hours → project hours). State is stored in `private_metadata` and the final submission writes to Notion, creates/archives extra project pages as needed, and confirms the save via DM.
 
 ### Scheduling
 
-Create or update an EventBridge rule that targets the Lambda function with the cron expression `cron(0 10 ? * MON *)` to fire every Monday at 10:00 (UTC by default). The Lambda handler automatically distinguishes scheduled invocations (`aws.events`) from Slack requests and sends the reminder DM to every target declared in `CAPACITY_TARGETS`.
-
-You can also trigger the reminder manually inside Slack via `/capacity-ping`. The slash command hits the same Lambda endpoint, which acknowledges the command and immediately calls the reminder logic.
+- Create an EventBridge rule with `cron(0 10 ? * MON *)` (10:00 UTC, adjust as needed) and set the Lambda function as the target. Each invocation gathers the current workspace users (or `CAPACITY_TARGETS`) and sends the DM with the modal button.
+- You can manually fire the same logic via `/capacity-ping broadcast` if you need to re-run the reminder outside the schedule.
 
 ### Local validation
 
@@ -44,4 +53,4 @@ To simulate the Monday reminder locally you can invoke the handler with a mock s
 node -e "require('./src/index').handler({ source: 'aws.events', 'detail-type': 'Scheduled Event' })"
 ```
 
-Make sure the required environment variables are exported before running the script.
+> Make sure all Slack and Notion environment variables are exported before running the script locally, otherwise the handler will throw during initialization.

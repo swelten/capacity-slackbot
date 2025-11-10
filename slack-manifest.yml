@@ -10,8 +10,8 @@ features:
   slash_commands:
     - command: /capacity-ping
       url: https://yi5vs7ozb5tggptffbm67iv43e0wysgo.lambda-url.eu-central-1.on.aws/slack/events
-      description: Trigger the capacity reminder manually
-      usage_hint: "/capacity-ping"
+      description: Öffnet das Kapazitätsformular oder sendet mit \"broadcast\" den Reminder
+      usage_hint: "/capacity-ping [broadcast]"
       should_escape: false
 
 oauth_config:
