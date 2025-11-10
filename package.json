@@ -1,0 +1,28 @@
+{
+  "name": "capacity-slackbot",
+  "version": "1.0.0",
+  "description": "AWS Lambda Slack bot that collects weekly capacity updates.",
+  "main": "src/index.js",
+  "scripts": {
+    "check": "node --check src/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/swelten/capacity-slackbot.git"
+  },
+  "keywords": [
+    "slack",
+    "lambda",
+    "reminder"
+  ],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/swelten/capacity-slackbot/issues"
+  },
+  "homepage": "https://github.com/swelten/capacity-slackbot#readme",
+  "dependencies": {
+    "@slack/bolt": "^4.6.0",
+    "@slack/web-api": "^7.12.0"
+  }
+}

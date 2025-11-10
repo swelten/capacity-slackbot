@@ -1,0 +1,42 @@
+display_information:
+  name: capacity-slackbot
+  description: Weekly capacity reminder bot
+  background_color: "#2047bd"
+features:
+  bot_user:
+    display_name: capacity-slackbot
+    always_online: true
+  slash_commands:
+    - command: /newproject
+      url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+      description: capacity-slackbot endpoint
+      should_escape: false
+    - command: /newacquisition
+      url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+      description: capacity-slackbot endpoint (acquisition)
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - chat:write
+      - commands
+      - im:history
+      - im:write
+      - channels:history
+      - groups:history
+      - channels:manage
+      - channels:read
+      - users:read
+settings:
+  event_subscriptions:
+    request_url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+    bot_events:
+      - message.channels
+      - message.groups
+      - message.im
+  interactivity:
+    is_enabled: true
+    request_url: https://gjxnfweznwiinhyxamgjj6csvu0rwmid.lambda-url.eu-central-1.on.aws/slack/events
+  org_deploy_enabled: false
+  socket_mode_enabled: false
+  token_rotation_enabled: false

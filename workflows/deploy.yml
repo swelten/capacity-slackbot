@@ -1,0 +1,150 @@
+name: Deploy Slackbot Container
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+    paths:
+      - src/**
+      - Dockerfile
+      - serverless.yml
+      - package.json
+      - package-lock.json
+      - .github/workflows/deploy.yml
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: dev
+        type: choice
+        options:
+          - dev
+          - prod
+
+env:
+  AWS_REGION: eu-central-1
+  AWS_ACCOUNT_ID: "950956085688"
+  ECR_REPOSITORY: capacity-slackbot
+
+jobs:
+  build-and-push:
+    name: Build & Push Image
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine deployment environment
+        id: detect
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TARGET="${{ github.event.inputs.environment }}"
+          elif [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            TARGET="prod"
+          else
+            TARGET="dev"
+          fi
+
+          SHORT_SHA=$(echo "${GITHUB_SHA}" | cut -c1-7)
+
+          echo "deploy_env=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "image_tag=$TARGET" >> "$GITHUB_OUTPUT"
+          echo "commit_tag=${TARGET}-${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          if [ "$TARGET" = "prod" ]; then
+            echo "latest_tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate Node sources
+        run: |
+          find src -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Ensure ECR repository exists
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories \
+            --repository-names "${{ env.ECR_REPOSITORY }}" \
+            --region "${{ env.AWS_REGION }}" >/dev/null 2>&1 || \
+          aws ecr create-repository \
+            --repository-name "${{ env.ECR_REPOSITORY }}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=KMS \
+            --region "${{ env.AWS_REGION }}"
+
+      - name: Build and push container image
+        id: build
+        env:
+          IMAGE_TAG: ${{ steps.detect.outputs.image_tag }}
+          COMMIT_TAG: ${{ steps.detect.outputs.commit_tag }}
+          LATEST_TAG: ${{ steps.detect.outputs.latest_tag }}
+        run: |
+          set -euo pipefail
+          REGISTRY="${{ steps.login-ecr.outputs.registry }}"
+          IMAGE_BASE="${REGISTRY}/${{ env.ECR_REPOSITORY }}"
+
+          docker build \
+            --platform linux/amd64 \
+            -f Dockerfile \
+            -t "${IMAGE_BASE}:${IMAGE_TAG}" \
+            -t "${IMAGE_BASE}:${COMMIT_TAG}" \
+            .
+
+          docker push "${IMAGE_BASE}:${IMAGE_TAG}"
+          docker push "${IMAGE_BASE}:${COMMIT_TAG}"
+
+          if [ -n "${LATEST_TAG:-}" ]; then
+            docker tag "${IMAGE_BASE}:${IMAGE_TAG}" "${IMAGE_BASE}:${LATEST_TAG}"
+            docker push "${IMAGE_BASE}:${LATEST_TAG}"
+          fi
+
+          {
+            echo "image_uri=${IMAGE_BASE}:${IMAGE_TAG}"
+            echo "commit_uri=${IMAGE_BASE}:${COMMIT_TAG}"
+            if [ -n "${LATEST_TAG:-}" ]; then
+              echo "latest_uri=${IMAGE_BASE}:${LATEST_TAG}"
+            fi
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Summarize deployment
+        run: |
+          {
+            echo "## Slackbot container deployment"
+            echo ""
+            echo "- Environment: **${{ steps.detect.outputs.deploy_env }}**"
+            echo "- Image tag: `${{ steps.detect.outputs.image_tag }}`"
+            echo "- Commit tag: `${{ steps.detect.outputs.commit_tag }}`"
+            if [ -n "${{ steps.detect.outputs.latest_tag }}" ]; then
+              echo "- Latest tag refreshed: `${{ steps.detect.outputs.latest_tag }}`"
+            fi
+            echo ""
+            echo "Environment image URI:"
+            echo ""
+            echo "```\n${{ steps.build.outputs.image_uri }}\n```"
+            echo ""
+            echo "Commit image URI:"
+            echo ""
+            echo "```\n${{ steps.build.outputs.commit_uri }}\n```"
+            if [ -n "${{ steps.detect.outputs.latest_tag }}" ]; then
+              echo ""
+              echo "Latest image URI:"
+              echo ""
+              echo "```\n${{ steps.build.outputs.latest_uri }}\n```"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
