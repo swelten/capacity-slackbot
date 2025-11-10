@@ -308,8 +308,8 @@ async function createBaseEntry({ personId, weekInfo }) {
     },
     Woche: {
       date: {
-        start: weekInfo.start,
-        end: weekInfo.end,
+        start: `${weekInfo.start}T00:00:00`,
+        end: `${weekInfo.end}T23:59:59`,
         time_zone: timezone,
       },
     },
@@ -771,8 +771,8 @@ async function createAdditionalProjectEntry({
       },
       Woche: {
         date: {
-          start: weekInfo.start,
-          end: weekInfo.end,
+          start: `${weekInfo.start}T00:00:00`,
+          end: `${weekInfo.end}T23:59:59`,
           time_zone: timezone,
         },
       },
