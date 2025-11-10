@@ -248,6 +248,10 @@ async function fetchProjects(limit = 100) {
         titleProperty?.title?.map((part) => part.plain_text).join('') ||
         'Unbenannt';
 
+      if (!/^P[A-Z0-9]{5}/.test(title)) {
+        continue;
+      }
+
       projects.push({
         id: entry.id,
         name: title,
@@ -685,8 +689,15 @@ function extractNumber(value) {
   if (value === undefined || value === null || value === '') {
     return null;
   }
-  const parsed = Number.parseFloat(value.replace(',', '.'));
-  return Number.isNaN(parsed) ? null : parsed;
+  const normalised = value.trim().replace(',', '.');
+  if (normalised === '') {
+    return null;
+  }
+  const parsed = Number.parseFloat(normalised);
+  if (Number.isNaN(parsed)) {
+    return null;
+  }
+  return parsed;
 }
 
 function getInputValue(values, blockId, actionId = 'value') {
