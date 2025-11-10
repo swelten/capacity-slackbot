@@ -192,6 +192,19 @@ if (app) {
   app.event('message', async ({ event, client, logger }) => {
     await handleCapacityResponse(event, client, logger);
   });
+
+  app.command('/capacity-ping', async ({ ack, respond, logger }) => {
+    await ack();
+    try {
+      await sendCapacityPrompts();
+      await respond('Triggered weekly capacity reminders.');
+    } catch (error) {
+      logger?.error?.(error);
+      await respond(
+        'Failed to trigger reminders. Please check Lambda logs for details.'
+      );
+    }
+  });
 }
 
 const slackHandler = awsLambdaReceiver ? awsLambdaReceiver.start() : null;

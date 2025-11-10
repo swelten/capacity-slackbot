@@ -6,7 +6,7 @@ capacity-slackbot is an AWS Lambda Slack bot that posts a weekly reminder every 
 
 - `Dockerfile` – builds a Lambda container image (`public.ecr.aws/lambda/nodejs:20`) and executes `src/index.handler`.
 - `src/index.js` – Lambda handler that serves both Slack event callbacks (via Bolt) and EventBridge schedule invocations.
-- `slack-manifest.yml` – Slack app configuration (slash commands, event subscriptions, interactivity endpoints) for capacity-slackbot.
+- `slack-manifest.yml` – Slack app configuration (slash command `/capacity-ping`, event subscriptions, interactivity endpoints) for capacity-slackbot.
 - `workflows/deploy.yml` – GitHub Actions workflow that builds and pushes the capacity-slackbot container image into ECR.
 
 ### Environment variables
@@ -28,6 +28,8 @@ capacity-slackbot is an AWS Lambda Slack bot that posts a weekly reminder every 
 ### Scheduling
 
 Create or update an EventBridge rule that targets the Lambda function with the cron expression `cron(0 10 ? * MON *)` to fire every Monday at 10:00 (UTC by default). The Lambda handler automatically distinguishes scheduled invocations (`aws.events`) from Slack requests and sends the reminder DM to every target declared in `CAPACITY_TARGETS`.
+
+You can also trigger the reminder manually inside Slack via `/capacity-ping`. The slash command hits the same Lambda endpoint, which acknowledges the command and immediately calls the reminder logic.
 
 ### Local validation
 
