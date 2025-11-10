@@ -345,6 +345,54 @@ function parseMetadata(str) {
   }
 }
 
+function buildLoadingView() {
+  return {
+    type: 'modal',
+    callback_id: 'loading_view',
+    title: {
+      type: 'plain_text',
+      text: 'Kapazität',
+    },
+    close: {
+      type: 'plain_text',
+      text: 'Schließen',
+    },
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Lade Notion-Daten … bitte warten.',
+        },
+      },
+    ],
+  };
+}
+
+function buildErrorView(message) {
+  return {
+    type: 'modal',
+    callback_id: 'error_view',
+    title: {
+      type: 'plain_text',
+      text: 'Kapazität',
+    },
+    close: {
+      type: 'plain_text',
+      text: 'Schließen',
+    },
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: `⚠️ *Fehler*\n${message}`,
+        },
+      },
+    ],
+  };
+}
+
 function buildStepOneView({ people, projects, weekInfo }) {
   const peopleOptions = people.map((person) => ({
     text: {
@@ -825,24 +873,44 @@ async function openCapacityModal(triggerId) {
   assertSlackClient();
   assertNotionConfig();
 
-  const [people, projects] = await Promise.all([
-    fetchNotionPeople(),
-    fetchProjects(),
-  ]);
-
-  if (!people.length) {
-    throw new Error(
-      'Keine Notion Benutzer gefunden. Teile die Datenbank mit der Integration.'
-    );
-  }
-
-  const weekInfo = getWeekBounds();
-
-  const view = buildStepOneView({ people, projects, weekInfo });
-  await slackClient.views.open({
+  const loadingView = buildLoadingView();
+  const openResponse = await slackClient.views.open({
     trigger_id: triggerId,
-    view,
+    view: loadingView,
   });
+
+  const viewId = openResponse?.view?.id;
+
+  try {
+    const [people, projects] = await Promise.all([
+      fetchNotionPeople(),
+      fetchProjects(),
+    ]);
+
+    if (!people.length) {
+      throw new Error(
+        'Keine Notion Nutzer gefunden. Teile die Datenbank mit der Integration.'
+      );
+    }
+
+    const weekInfo = getWeekBounds();
+    const stepOneView = buildStepOneView({ people, projects, weekInfo });
+
+    await slackClient.views.update({
+      view_id: viewId,
+      view: stepOneView,
+    });
+  } catch (error) {
+    if (viewId) {
+      await slackClient.views.update({
+        view_id: viewId,
+        view: buildErrorView(
+          'Formular konnte nicht geladen werden. Bitte erneut versuchen.'
+        ),
+      });
+    }
+    throw error;
+  }
 }
 
 function extractSelectedProjects(selected = []) {
