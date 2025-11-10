@@ -805,6 +805,12 @@ async function saveCapacityToNotion(metadata) {
     projectHours = {},
   } = metadata;
 
+  let targetPageId = pageId;
+  if (!targetPageId) {
+    const basePage = await ensureBaseEntry({ personId, weekInfo });
+    targetPageId = basePage.id;
+  }
+
   const properties = {
     Name: {
       title: [
@@ -848,7 +854,7 @@ async function saveCapacityToNotion(metadata) {
   }
 
   await notionClient.pages.update({
-    page_id: pageId,
+    page_id: targetPageId,
     properties,
   });
 
@@ -997,14 +1003,9 @@ if (app) {
       }
 
       const weekInfo = getWeekBounds();
-      const page = await ensureBaseEntry({
-        personId: person,
-        weekInfo,
-      });
-
       const metadata = {
         userId: body.user.id,
-        pageId: page.id,
+        pageId: null,
         personId: person,
         contractHours,
         weekInfo,
