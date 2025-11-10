@@ -46,6 +46,7 @@ const MANDATORY_FIELDS = [
   { id: 'Finanzen', label: 'Finanzen' },
   { id: 'HR', label: 'HR' },
   { id: 'Study', label: 'Study' },
+  { id: 'Regelmäßige Aufgaben(Mails...)', label: 'Regelmäßige Aufgaben (Mails, etc.)' },
 ];
 
 const DEVELOPER_FIELDS = [

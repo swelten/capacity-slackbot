@@ -4,7 +4,7 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 
 1. Auto-fills the **Name** property with the current ISO calendar week (`KW XX`) and stores the Monday–Sunday range in the `Woche` date field.
 2. Lets the user choose themselves from the Notion people list (`Person`) and enter contractual hours (`Verfügbar`).
-3. Collects hours for the mandatory business areas (Marketing, Management, Akquise, Finanzen, HR, Study) based on a multi-select choice.
+3. Collects hours for the mandatory business areas (Marketing, Management, Akquise, Finanzen, HR, Study, Regelmäßige Aufgaben/Mails) based on a multi-select choice.
 4. Asks whether the user is a developer; if yes, it requests hours for `Dev-DeepWaive`, `Dev-General`, `Dev-Platform`, and `Dev-Website`.
 5. Offers a multi-select of all projects from the “Alle Projekte Database” and captures the worked hours per project. The first project is saved on the base entry, further projects create additional `KW XX (1)`, `KW XX (2)`, … pages that point to the same week and person.
 
