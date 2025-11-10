@@ -1157,9 +1157,24 @@ if (app) {
 
     if (projectIndex + 1 < projects.length) {
       metadata.projectIndex = projectIndex + 1;
+      metadata.private_metadata = serialiseMetadata(metadata);
+      let newView;
+      try {
+        newView = buildStepThreeView(metadata);
+      } catch (error) {
+        logger?.error?.(error);
+        await ack({
+          response_action: 'errors',
+          errors: {
+            project_hours_block: 'Could not load the next project. Try again.',
+          },
+        });
+        return;
+      }
+
       await ack({
-        response_action: 'push',
-        view: buildStepThreeView(metadata),
+        response_action: 'update',
+        view: newView,
       });
       return;
     }
