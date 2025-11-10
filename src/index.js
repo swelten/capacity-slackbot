@@ -460,7 +460,7 @@ function buildStepOneView({ people, projects, weekInfo }) {
         block_id: 'contract_block',
         label: {
           type: 'plain_text',
-          text: 'Vertragliche Stunden (z. B. 40)',
+          text: 'KW Arbeitsstunden',
         },
         element: {
           type: 'plain_text_input',
@@ -469,6 +469,10 @@ function buildStepOneView({ people, projects, weekInfo }) {
             type: 'plain_text',
             text: 'Nur Zahl eingeben',
           },
+        },
+        hint: {
+          type: 'plain_text',
+          text: 'Wie viele Stunden hast du gearbeitet? Komplette Woche = z. B. 40, sonst weniger.',
         },
       },
       {
