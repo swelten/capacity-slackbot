@@ -308,9 +308,8 @@ async function createBaseEntry({ personId, weekInfo }) {
     },
     Woche: {
       date: {
-        start: `${weekInfo.start}T00:00:00`,
-        end: `${weekInfo.end}T23:59:59`,
-        time_zone: timezone,
+        start: weekInfo.start,
+        end: weekInfo.end,
       },
     },
   };
@@ -771,9 +770,8 @@ async function createAdditionalProjectEntry({
       },
       Woche: {
         date: {
-          start: `${weekInfo.start}T00:00:00`,
-          end: `${weekInfo.end}T23:59:59`,
-          time_zone: timezone,
+          start: weekInfo.start,
+          end: weekInfo.end,
         },
       },
       Projekt: {
@@ -818,7 +816,6 @@ async function saveCapacityToNotion(metadata) {
       date: {
         start: weekInfo.start,
         end: weekInfo.end,
-        time_zone: timezone,
       },
     },
     Verfügbar: {
