@@ -33,7 +33,7 @@ const configuredTargets = (process.env.CAPACITY_TARGETS || '')
 
 const PROMPT_BUTTON_ACTION = 'open_capacity_modal';
 const PROMPT_TEXT =
-  'Bitte trage deine Kapazitäten für die aktuelle Kalenderwoche ein. Klicke auf den Button, um das Formular zu öffnen.';
+  'Please log your capacity for the current calendar week. Click the button below to open the form.';
 
 const STEP_ONE_ID = 'capacity_step_1';
 const STEP_TWO_ID = 'capacity_step_2';
@@ -176,7 +176,7 @@ async function sendCapacityPrompts() {
           elements: [
             {
               type: 'mrkdwn',
-              text: `Zeitraum: ${weekInfo.start} bis ${weekInfo.end}`,
+            text: `Range: ${weekInfo.start} to ${weekInfo.end}`,
             },
           ],
         },
@@ -185,7 +185,7 @@ async function sendCapacityPrompts() {
           elements: [
             {
               type: 'button',
-              text: { type: 'plain_text', text: 'Kapazität melden' },
+              text: { type: 'plain_text', text: 'Open capacity form' },
               action_id: PROMPT_BUTTON_ACTION,
               value: JSON.stringify({
                 weekName: weekInfo.weekName,
@@ -355,18 +355,18 @@ function buildLoadingView() {
     callback_id: 'loading_view',
     title: {
       type: 'plain_text',
-      text: 'Kapazität',
+      text: 'Capacity',
     },
     close: {
       type: 'plain_text',
-      text: 'Schließen',
+      text: 'Close',
     },
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: 'Lade Notion-Daten … bitte warten.',
+          text: 'Loading workspace data… please wait.',
         },
       },
     ],
@@ -379,18 +379,18 @@ function buildErrorView(message) {
     callback_id: 'error_view',
     title: {
       type: 'plain_text',
-      text: 'Kapazität',
+      text: 'Capacity',
     },
     close: {
       type: 'plain_text',
-      text: 'Schließen',
+      text: 'Close',
     },
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `⚠️ *Fehler*\n${message}`,
+          text: `⚠️ *Error*\n${message}`,
         },
       },
     ],
@@ -420,22 +420,22 @@ function buildStepOneView({ people, projects, weekInfo }) {
     private_metadata: serialiseMetadata({}),
     title: {
       type: 'plain_text',
-      text: 'Kapazität eintragen',
+      text: 'Log capacity',
     },
     submit: {
       type: 'plain_text',
-      text: 'Weiter',
+      text: 'Next',
     },
     close: {
       type: 'plain_text',
-      text: 'Abbrechen',
+      text: 'Cancel',
     },
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `Kalenderwoche *${weekInfo.weekName}* (${weekInfo.start} – ${weekInfo.end})`,
+          text: `Calendar week *${weekInfo.weekName}* (${weekInfo.start} – ${weekInfo.end})`,
         },
       },
       {
@@ -443,14 +443,14 @@ function buildStepOneView({ people, projects, weekInfo }) {
         block_id: 'person_block',
         label: {
           type: 'plain_text',
-          text: 'Person auswählen',
+          text: 'Select person',
         },
         element: {
           type: 'static_select',
           action_id: 'person_select',
           placeholder: {
             type: 'plain_text',
-            text: 'Wer füllt die Kapazität aus?',
+            text: 'Who is submitting this entry?',
           },
           options: peopleOptions,
         },
@@ -460,19 +460,19 @@ function buildStepOneView({ people, projects, weekInfo }) {
         block_id: 'contract_block',
         label: {
           type: 'plain_text',
-          text: 'KW Arbeitsstunden',
+          text: 'Weekly working hours',
         },
         element: {
           type: 'plain_text_input',
           action_id: 'contract_input',
           placeholder: {
             type: 'plain_text',
-            text: 'Nur Zahl eingeben',
+            text: 'Enter digits only',
           },
         },
         hint: {
           type: 'plain_text',
-          text: 'Wie viele Stunden hast du gearbeitet? Komplette Woche = z. B. 40, sonst weniger.',
+          text: 'How many hours did you work this week? Full week = e.g. 40, part-time accordingly less.',
         },
       },
       {
@@ -480,14 +480,14 @@ function buildStepOneView({ people, projects, weekInfo }) {
         block_id: 'mandatory_block',
         label: {
           type: 'plain_text',
-          text: 'Pflicht-Bereiche auswählen',
+          text: 'Select business areas',
         },
         element: {
           type: 'multi_static_select',
           action_id: 'mandatory_select',
           placeholder: {
             type: 'plain_text',
-            text: 'Wähle die Bereiche, in denen du gearbeitet hast',
+            text: 'Choose every area you worked in this week',
           },
           options: MANDATORY_FIELDS.map((field) => ({
             text: { type: 'plain_text', text: field.label },
@@ -501,14 +501,14 @@ function buildStepOneView({ people, projects, weekInfo }) {
         block_id: 'developer_block',
         label: {
           type: 'plain_text',
-          text: 'Bist du Entwickler:in?',
+          text: 'Are you a developer?',
         },
         element: {
           type: 'static_select',
           action_id: 'developer_choice',
           options: [
-            { text: { type: 'plain_text', text: 'Ja' }, value: 'yes' },
-            { text: { type: 'plain_text', text: 'Nein' }, value: 'no' },
+            { text: { type: 'plain_text', text: 'Yes' }, value: 'yes' },
+            { text: { type: 'plain_text', text: 'No' }, value: 'no' },
           ],
         },
       },
@@ -518,14 +518,14 @@ function buildStepOneView({ people, projects, weekInfo }) {
         block_id: 'projects_block',
         label: {
           type: 'plain_text',
-          text: 'Projekte (Multi-Select)',
+          text: 'Projects (multi-select)',
         },
         element: {
           type: 'multi_static_select',
           action_id: 'projects_select',
           placeholder: {
             type: 'plain_text',
-            text: 'Wähle alle Projekte dieser Woche',
+            text: 'Select every project you worked on',
           },
           options: projectOptions,
         },
@@ -542,7 +542,7 @@ function buildStepTwoView(metadata) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: 'Bitte gib die Stunden für die ausgewählten Bereiche ein.',
+        text: 'Please enter hours for the selected areas.',
       },
     });
 
@@ -561,7 +561,7 @@ function buildStepTwoView(metadata) {
           action_id: 'value',
           placeholder: {
             type: 'plain_text',
-            text: 'Nur Zahl eingeben',
+            text: 'Enter digits only',
           },
         },
       });
@@ -581,7 +581,7 @@ function buildStepTwoView(metadata) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: '*Developer Bereiche*',
+        text: '*Developer areas*',
       },
     });
 
@@ -601,7 +601,7 @@ function buildStepTwoView(metadata) {
           action_id: 'value',
           placeholder: {
             type: 'plain_text',
-            text: 'Nur Zahl eingeben',
+            text: 'Enter digits only',
           },
         },
       });
@@ -614,15 +614,15 @@ function buildStepTwoView(metadata) {
     private_metadata: serialiseMetadata(metadata),
     title: {
       type: 'plain_text',
-      text: 'Aufgaben',
+      text: 'Categories',
     },
     submit: {
       type: 'plain_text',
-      text: metadata.projects?.length ? 'Weiter' : 'Speichern',
+      text: metadata.projects?.length ? 'Next' : 'Save',
     },
     close: {
       type: 'plain_text',
-      text: 'Zurück',
+      text: 'Back',
     },
     blocks,
   };
@@ -636,7 +636,7 @@ function buildStepThreeView(metadata) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: 'Keine Projekte ausgewählt.',
+        text: 'No projects selected.',
       },
     });
   } else {
@@ -644,7 +644,7 @@ function buildStepThreeView(metadata) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: 'Bitte gib die Projektstunden an.',
+        text: 'Please enter hours per project.',
       },
     });
 
@@ -662,7 +662,7 @@ function buildStepThreeView(metadata) {
           action_id: 'value',
           placeholder: {
             type: 'plain_text',
-            text: 'Nur Zahl eingeben',
+            text: 'Enter digits only',
           },
         },
       });
@@ -675,15 +675,15 @@ function buildStepThreeView(metadata) {
     private_metadata: serialiseMetadata(metadata),
     title: {
       type: 'plain_text',
-      text: 'Projektarbeit',
+      text: 'Project work',
     },
     submit: {
       type: 'plain_text',
-      text: 'Fertigstellen',
+      text: 'Submit',
     },
     close: {
       type: 'plain_text',
-      text: 'Zurück',
+      text: 'Back',
     },
     blocks,
   };
@@ -908,7 +908,7 @@ async function openCapacityModal(triggerId) {
 
     if (!people.length) {
       throw new Error(
-        'Keine Notion Nutzer gefunden. Teile die Datenbank mit der Integration.'
+        'No Notion users found. Please share the database with this integration.'
       );
     }
 
@@ -924,7 +924,7 @@ async function openCapacityModal(triggerId) {
       await slackClient.views.update({
         view_id: viewId,
         view: buildErrorView(
-          'Formular konnte nicht geladen werden. Bitte erneut versuchen.'
+          'Unable to load the form. Please try again.'
         ),
       });
     }
@@ -955,16 +955,14 @@ if (app) {
       const trimmed = body.text?.trim();
       if (trimmed === 'broadcast') {
         await sendCapacityPrompts();
-        await respond('Kapazitätsanfragen wurden gesendet.');
+        await respond('Sent the capacity reminders.');
       } else {
         await openCapacityModal(body.trigger_id);
-        await respond(
-          'Ein Formular zur Erfassung deiner Kapazität wurde geöffnet.'
-        );
+        await respond('Opened the capacity modal for you.');
       }
     } catch (error) {
       logger?.error?.(error);
-      await respond('Aktion fehlgeschlagen. Bitte Logs prüfen.');
+      await respond('Action failed. Please check the Lambda logs.');
     }
   });
 
@@ -988,10 +986,10 @@ if (app) {
 
       const errors = {};
       if (!person) {
-        errors.person_block = 'Bitte Person wählen.';
+        errors.person_block = 'Please choose a person.';
       }
       if (contractHours === null) {
-        errors.contract_block = 'Bitte Zahl eingeben.';
+        errors.contract_block = 'Please enter a number.';
       }
 
       if (Object.keys(errors).length) {
@@ -1037,26 +1035,23 @@ if (app) {
 
       metadata.mandatoryValues = {};
       metadata.developerValues = {};
+      await ack({ response_action: 'clear' });
       try {
         await saveCapacityToNotion(metadata);
-        await ack({ response_action: 'clear' });
-        await notifyUser(metadata.userId, 'Kapazität gespeichert. Danke!');
+        await notifyUser(metadata.userId, 'Thanks — capacity saved.');
       } catch (error) {
         logger?.error?.(error);
-        await ack({
-          response_action: 'errors',
-          errors: {
-            mandatory_block:
-              'Speichern fehlgeschlagen. Bitte später erneut versuchen.',
-          },
-        });
+        await notifyUser(
+          metadata.userId,
+          'Saving your capacity failed. Please try again later.'
+        );
       }
     } catch (error) {
       logger?.error?.(error);
       await ack({
         response_action: 'errors',
         errors: {
-          contract_block: 'Ein Fehler ist aufgetreten. Bitte erneut versuchen.',
+          contract_block: 'Something went wrong. Please try again.',
         },
       });
     }
@@ -1073,7 +1068,7 @@ if (app) {
       const raw = getInputValue(values, blockId);
       const extracted = extractNumber(raw);
       if (extracted === null) {
-        errors[blockId] = 'Zahl erforderlich.';
+        errors[blockId] = 'Please enter a number.';
       } else {
         mandatoryValues[field] = extracted;
       }
@@ -1108,19 +1103,16 @@ if (app) {
       return;
     }
 
+    await ack({ response_action: 'clear' });
     try {
       await saveCapacityToNotion(metadata);
-      await ack({ response_action: 'clear' });
-      await notifyUser(metadata.userId, 'Kapazität gespeichert. Danke!');
+      await notifyUser(metadata.userId, 'Thanks — capacity saved.');
     } catch (error) {
       logger?.error?.(error);
-      await ack({
-        response_action: 'errors',
-        errors: {
-          mandatory_block:
-            'Speichern fehlgeschlagen. Bitte später erneut versuchen.',
-        },
-      });
+      await notifyUser(
+        metadata.userId,
+        'Saving your capacity failed. Please try again later.'
+      );
     }
   });
 
@@ -1135,7 +1127,7 @@ if (app) {
       const raw = getInputValue(values, blockId);
       const extracted = extractNumber(raw);
       if (extracted === null) {
-        errors[blockId] = 'Zahl erforderlich.';
+        errors[blockId] = 'Please enter a number.';
       } else {
         projectHours[project.id] = extracted;
       }
@@ -1151,19 +1143,16 @@ if (app) {
 
     metadata.projectHours = projectHours;
 
+    await ack({ response_action: 'clear' });
     try {
       await saveCapacityToNotion(metadata);
-      await ack({ response_action: 'clear' });
-      await notifyUser(metadata.userId, 'Kapazität & Projekte gespeichert.');
+      await notifyUser(metadata.userId, 'Capacity and projects saved. Thank you!');
     } catch (error) {
       logger?.error?.(error);
-      await ack({
-        response_action: 'errors',
-        errors: {
-          projects_block:
-            'Speichern fehlgeschlagen. Bitte später erneut versuchen.',
-        },
-      });
+      await notifyUser(
+        metadata.userId,
+        'We could not save your project hours. Please try again later.'
+      );
     }
   });
 }
