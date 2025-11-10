@@ -629,9 +629,13 @@ function buildStepTwoView(metadata) {
 }
 
 function buildStepThreeView(metadata) {
+  const projects = metadata.projects || [];
+  const projectIndex = metadata.projectIndex || 0;
+  const currentProject = projects[projectIndex];
+
   const blocks = [];
 
-  if (!metadata.projects?.length) {
+  if (!currentProject) {
     blocks.push({
       type: 'section',
       text: {
@@ -644,28 +648,25 @@ function buildStepThreeView(metadata) {
       type: 'section',
       text: {
         type: 'mrkdwn',
-        text: 'Please enter hours per project.',
+        text: `Project ${projectIndex + 1} of ${projects.length}`,
       },
     });
 
-    metadata.projects.forEach((project, index) => {
-      const blockId = buildBlockId('project', `${index}_${project.id}`);
-      blocks.push({
-        type: 'input',
-        block_id: blockId,
-        label: {
+    blocks.push({
+      type: 'input',
+      block_id: 'project_hours_block',
+      label: {
+        type: 'plain_text',
+        text: `${currentProject.name} (hours)`,
+      },
+      element: {
+        type: 'plain_text_input',
+        action_id: 'value',
+        placeholder: {
           type: 'plain_text',
-          text: `${project.name} (Stunden)`,
+          text: 'Enter digits only',
         },
-        element: {
-          type: 'plain_text_input',
-          action_id: 'value',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Enter digits only',
-          },
-        },
-      });
+      },
     });
   }
 
@@ -679,7 +680,7 @@ function buildStepThreeView(metadata) {
     },
     submit: {
       type: 'plain_text',
-      text: 'Submit',
+      text: projectIndex + 1 >= projects.length ? 'Submit' : 'Next project',
     },
     close: {
       type: 'plain_text',
@@ -1026,6 +1027,8 @@ if (app) {
       if (metadata.projects?.length) {
         metadata.mandatoryValues = {};
         metadata.developerValues = {};
+        metadata.projectHours = metadata.projectHours || {};
+        metadata.projectIndex = 0;
         await ack({
           response_action: 'push',
           view: buildStepThreeView(metadata),
@@ -1096,6 +1099,8 @@ if (app) {
     metadata.developerValues = developerValues;
 
     if (metadata.projects?.length) {
+      metadata.projectHours = metadata.projectHours || {};
+      metadata.projectIndex = 0;
       await ack({
         response_action: 'push',
         view: buildStepThreeView(metadata),
@@ -1116,32 +1121,46 @@ if (app) {
     }
   });
 
-  app.view(STEP_THREE_ID, async ({ ack, body, view, logger }) => {
+  app.view(STEP_THREE_ID, async ({ ack, view, logger }) => {
     const metadata = parseMetadata(view.private_metadata);
     const values = view.state.values;
-    const errors = {};
-    const projectHours = {};
+    const projects = metadata.projects || [];
+    const projectIndex = metadata.projectIndex || 0;
+    const currentProject = projects[projectIndex];
 
-    metadata.projects?.forEach((project, index) => {
-      const blockId = buildBlockId('project', `${index}_${project.id}`);
-      const raw = getInputValue(values, blockId);
-      const extracted = extractNumber(raw);
-      if (extracted === null) {
-        errors[blockId] = 'Please enter a number.';
-      } else {
-        projectHours[project.id] = extracted;
-      }
-    });
+    if (!currentProject) {
+      await ack({ response_action: 'clear' });
+      await notifyUser(
+        metadata.userId,
+        'No projects were selected, so nothing was saved.'
+      );
+      return;
+    }
 
-    if (Object.keys(errors).length) {
+    const raw = getInputValue(values, 'project_hours_block');
+    const extracted = extractNumber(raw);
+    if (extracted === null) {
       await ack({
         response_action: 'errors',
-        errors,
+        errors: {
+          project_hours_block: 'Please enter a number.',
+        },
       });
       return;
     }
 
+    const projectHours = metadata.projectHours || {};
+    projectHours[currentProject.id] = extracted;
     metadata.projectHours = projectHours;
+
+    if (projectIndex + 1 < projects.length) {
+      metadata.projectIndex = projectIndex + 1;
+      await ack({
+        response_action: 'push',
+        view: buildStepThreeView(metadata),
+      });
+      return;
+    }
 
     await ack({ response_action: 'clear' });
     try {
