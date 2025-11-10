@@ -207,7 +207,7 @@ if (app) {
   });
 }
 
-const slackHandler = awsLambdaReceiver ? awsLambdaReceiver.start() : null;
+const slackHandlerPromise = awsLambdaReceiver ? awsLambdaReceiver.start() : null;
 
 async function handler(event, context, callback) {
   if (isScheduledEvent(event)) {
@@ -218,8 +218,12 @@ async function handler(event, context, callback) {
     };
   }
 
-  if (!slackHandler) {
+  if (!slackHandlerPromise) {
     throw new Error('Slack handler not configured.');
+  }
+  const slackHandler = await slackHandlerPromise;
+  if (typeof slackHandler !== 'function') {
+    throw new Error('Slack handler failed to initialize.');
   }
 
   return slackHandler(event, context, callback);
