@@ -1158,7 +1158,7 @@ if (app) {
     if (projectIndex + 1 < projects.length) {
       metadata.projectIndex = projectIndex + 1;
       await ack({
-        response_action: 'update',
+        response_action: 'push',
         view: buildStepThreeView(metadata),
       });
       return;
