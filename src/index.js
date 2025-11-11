@@ -201,9 +201,11 @@ function getWeekBounds(referenceDate = DateTime.now().setZone(timezone)) {
     base = DateTime.now().setZone('UTC');
   }
 
-  const monday = base.minus({ days: base.weekday - 1 }).startOf('day');
+  const target = base.minus({ weeks: 1 });
+
+  const monday = target.minus({ days: target.weekday - 1 }).startOf('day');
   const sunday = monday.plus({ days: 6 }).endOf('day');
-  const weekNumber = base.weekNumber;
+  const weekNumber = target.weekNumber;
 
   return {
     weekNumber,
