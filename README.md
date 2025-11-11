@@ -1,6 +1,6 @@
 ## capacity-slackbot
 
-capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to submit their weekly capacity and writes the answers into Notion. Each reminder DM contains a “Kapazität melden” button that opens a guided modal. The modal:
+capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to submit their weekly capacity and writes the answers into Notion. Each reminder DM contains a “Kapazität melden” button that starts a guided DM conversation. The bot sequentially asks for:
 
 1. Auto-fills the **Name** property with the current ISO calendar week (`KW XX`) and stores the Monday–Sunday range in the `Woche` date field.
 2. Lets the user choose themselves from the Notion people list (`Person`) and enter contractual hours (`Verfügbar`).
@@ -11,7 +11,7 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 ### Repository structure
 
 - `Dockerfile` – builds a Lambda container image (`public.ecr.aws/lambda/nodejs:20`) and executes `src/index.handler`.
-- `src/index.js` – Lambda entrypoint containing Slack Bolt handlers, Notion helpers, the modal workflow, and the EventBridge scheduler hook.
+- `src/index.js` – Lambda entrypoint containing Slack Bolt handlers, Notion helpers, the conversational workflow, and the EventBridge scheduler hook.
 - `slack-manifest.yml` – Slack app definition (`/capacity-ping` slash command, message actions, interactivity URLs) that must point to the deployed Lambda Function URL.
 - `workflows/deploy.yml` – GitHub Actions workflow that validates sources and pushes the Lambda container to ECR.
 
@@ -31,13 +31,13 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 
 ### Slack interactions
 
-- **Scheduled DM** – Every Monday at 10:00 (via EventBridge) the bot DM’s each target user with the reminder text and button. Clicking the button opens the modal.
-- **`/capacity-ping` slash command** – Without arguments it opens the same modal for the command user (handy for ad-hoc edits). Run `/capacity-ping broadcast` to trigger the reminder DM immediately for everyone (mirrors the EventBridge run).
-- **Modal flow** – The modal is broken into up to three steps (base data → task/category hours → project hours). State is stored in `private_metadata` and the final submission writes to Notion, creates/archives extra project pages as needed, and confirms the save via DM.
+- **Scheduled DM** – Every Monday at 10:00 (via EventBridge) the bot DM’s each target user with the reminder text and button. Clicking the button starts the guided DM chat.
+- **`/capacity-ping` slash command** – Without arguments it starts the same chat for the command user (handy for ad-hoc edits). Run `/capacity-ping broadcast` to trigger the reminder DM immediately for everyone (mirrors the EventBridge run).
+- **Chat flow** – The bot walks each user through the same three logical steps (base data → task/category hours → project hours) inside the DM. Every answer is captured in real time; once the last question is answered the entry is written to Notion, extra project pages are created/archived as needed, and the user receives a confirmation DM.
 
 ### Scheduling
 
-- Create an EventBridge rule with `cron(0 10 ? * MON *)` (10:00 UTC, adjust as needed) and set the Lambda function as the target. Each invocation gathers the current workspace users (or `CAPACITY_TARGETS`) and sends the DM with the modal button.
+- Create an EventBridge rule with `cron(0 10 ? * MON *)` (10:00 UTC, adjust as needed) and set the Lambda function as the target. Each invocation gathers the current workspace users (or `CAPACITY_TARGETS`) and sends the DM with the chat button.
 - You can manually fire the same logic via `/capacity-ping broadcast` if you need to re-run the reminder outside the schedule.
 
 ### Local validation

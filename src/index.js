@@ -33,11 +33,14 @@ const configuredTargets = (process.env.CAPACITY_TARGETS || '')
 
 const PROMPT_BUTTON_ACTION = 'open_capacity_modal';
 const PROMPT_TEXT =
-  'Please log your capacity for the current calendar week. Click the button below to open the form.';
+  'Please log your capacity for the current calendar week. Click the button below to answer the questions.';
 
-const STEP_ONE_ID = 'capacity_step_1';
-const STEP_TWO_ID = 'capacity_step_2';
-const STEP_THREE_ID = 'capacity_step_3';
+const ACTION_IDS = {
+  PERSON: 'conversation_select_person',
+  MANDATORY: 'conversation_select_mandatory',
+  DEVELOPER: 'conversation_select_developer',
+  PROJECTS: 'conversation_select_projects',
+};
 
 const MANDATORY_FIELDS = [
   { id: 'Marketing', label: 'Marketing' },
@@ -55,6 +58,15 @@ const DEVELOPER_FIELDS = [
   { id: 'Dev-Platform', label: 'Platform' },
   { id: 'Dev-Website', label: 'Website' },
 ];
+
+const activeConversations = new Map();
+
+const mandatoryFieldLabels = new Map(
+  MANDATORY_FIELDS.map((field) => [field.id, field.label])
+);
+const developerFieldLabels = new Map(
+  DEVELOPER_FIELDS.map((field) => [field.id, field.label])
+);
 
 function assertSlackClient() {
   if (!slackClient) {
@@ -185,7 +197,7 @@ async function sendCapacityPrompts() {
           elements: [
             {
               type: 'button',
-              text: { type: 'plain_text', text: 'Open capacity form' },
+              text: { type: 'plain_text', text: 'Start capacity chat' },
               action_id: PROMPT_BUTTON_ACTION,
               value: JSON.stringify({
                 weekName: weekInfo.weekName,
@@ -333,361 +345,354 @@ async function ensureBaseEntry({ personId, weekInfo }) {
   return page;
 }
 
-function buildBlockId(prefix, name) {
-  return `${prefix}_${name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}`;
+function normaliseOptionLabel(text) {
+  return (text || 'Unbenannt').slice(0, 75);
 }
 
-function serialiseMetadata(metadata) {
-  return JSON.stringify(metadata);
+function getFieldLabel(fieldMap, id) {
+  return fieldMap.get(id) || id;
 }
 
-function parseMetadata(str) {
+async function ensureDmChannel(userId, preferredChannelId = null) {
+  if (preferredChannelId && preferredChannelId.startsWith('D')) {
+    return preferredChannelId;
+  }
+
+  const dm = await slackClient.conversations.open({ users: userId });
+  if (!dm?.channel?.id) {
+    throw new Error('Unable to open a DM channel.');
+  }
+  return dm.channel.id;
+}
+
+function resetConversation(channelId) {
+  activeConversations.delete(channelId);
+}
+
+async function notifyStaleConversation(userId, channelId) {
   try {
-    return JSON.parse(str);
+    const targetChannel = channelId || (await ensureDmChannel(userId));
+    await slackClient.chat.postMessage({
+      channel: targetChannel,
+      text: 'This capacity session expired. Run /capacity-ping to start again.',
+    });
   } catch {
-    return {};
+    // Ignore notification errors.
   }
 }
 
-function buildLoadingView() {
-  return {
-    type: 'modal',
-    callback_id: 'loading_view',
-    title: {
-      type: 'plain_text',
-      text: 'Capacity',
-    },
-    close: {
-      type: 'plain_text',
-      text: 'Close',
-    },
+async function startCapacityConversation({ userId, channelId }) {
+  assertSlackClient();
+  assertNotionConfig();
+
+  const dmChannelId = await ensureDmChannel(userId, channelId);
+  resetConversation(dmChannelId);
+
+  let people;
+  let projects;
+  try {
+    [people, projects] = await Promise.all([fetchNotionPeople(), fetchProjects()]);
+  } catch (error) {
+    await slackClient.chat.postMessage({
+      channel: dmChannelId,
+      text: 'Unable to load Notion data. Please try again in a moment.',
+    });
+    throw error;
+  }
+
+  if (!people.length) {
+    await slackClient.chat.postMessage({
+      channel: dmChannelId,
+      text: 'No Notion users were found. Please share the database with the integration.',
+    });
+    return;
+  }
+
+  const weekInfo = getWeekBounds();
+  const conversation = {
+    userId,
+    channelId: dmChannelId,
+    weekInfo,
+    people,
+    projects,
+    personId: null,
+    contractHours: null,
+    mandatorySelections: [],
+    mandatoryValues: {},
+    isDeveloper: false,
+    developerValues: {},
+    projectsSelected: [],
+    projectHours: {},
+    currentMandatoryIndex: 0,
+    currentDeveloperIndex: 0,
+    currentProjectIndex: 0,
+    state: 'awaiting_person',
+  };
+
+  activeConversations.set(dmChannelId, conversation);
+
+  await slackClient.chat.postMessage({
+    channel: dmChannelId,
+    text: `Let's log your capacity for ${weekInfo.weekName}.`,
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: 'Loading workspace data… please wait.',
+          text: `Let's log your capacity for *${weekInfo.weekName}* (${weekInfo.start} – ${weekInfo.end}). Type *cancel* anytime to stop.`,
         },
       },
     ],
-  };
+  });
+
+  await promptPersonSelection(conversation);
 }
 
-function buildErrorView(message) {
-  return {
-    type: 'modal',
-    callback_id: 'error_view',
-    title: {
-      type: 'plain_text',
-      text: 'Capacity',
-    },
-    close: {
-      type: 'plain_text',
-      text: 'Close',
-    },
-    blocks: [
-      {
-        type: 'section',
-        text: {
-          type: 'mrkdwn',
-          text: `⚠️ *Error*\n${message}`,
-        },
-      },
-    ],
-  };
-}
-
-function buildStepOneView({ people, projects, weekInfo }) {
-  const peopleOptions = people.map((person) => ({
+async function promptPersonSelection(conversation) {
+  conversation.state = 'awaiting_person';
+  const options = conversation.people.map((person) => ({
     text: {
       type: 'plain_text',
-      text: person.name,
+      text: normaliseOptionLabel(person.name),
     },
     value: person.id,
   }));
 
-  const projectOptions = projects.map((project) => ({
-    text: {
-      type: 'plain_text',
-      text: project.name.slice(0, 75),
-    },
-    value: project.id,
-  }));
-
-  return {
-    type: 'modal',
-    callback_id: STEP_ONE_ID,
-    private_metadata: serialiseMetadata({}),
-    title: {
-      type: 'plain_text',
-      text: 'Log capacity',
-    },
-    submit: {
-      type: 'plain_text',
-      text: 'Next',
-    },
-    close: {
-      type: 'plain_text',
-      text: 'Cancel',
-    },
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: 'Select the person for this entry.',
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `Calendar week *${weekInfo.weekName}* (${weekInfo.start} – ${weekInfo.end})`,
+          text: 'Who is submitting this capacity entry?',
         },
-      },
-      {
-        type: 'input',
-        block_id: 'person_block',
-        label: {
-          type: 'plain_text',
-          text: 'Select person',
-        },
-        element: {
+        accessory: {
           type: 'static_select',
-          action_id: 'person_select',
+          action_id: ACTION_IDS.PERSON,
           placeholder: {
             type: 'plain_text',
-            text: 'Who is submitting this entry?',
+            text: 'Select person',
           },
-          options: peopleOptions,
+          options,
+        },
+      },
+    ],
+  });
+}
+
+async function promptContractHours(conversation) {
+  conversation.state = 'awaiting_contract_hours';
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text:
+      'How many hours did you work this week? Send a number like 40 or 32.5.',
+  });
+}
+
+async function promptMandatorySelection(conversation) {
+  conversation.state = 'awaiting_mandatory_selection';
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: 'Select the business areas you worked in.',
+    blocks: [
+      {
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Select every business area you contributed to this week.',
         },
       },
       {
-        type: 'input',
-        block_id: 'contract_block',
-        label: {
-          type: 'plain_text',
-          text: 'Weekly working hours',
-        },
-        element: {
-          type: 'plain_text_input',
-          action_id: 'contract_input',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Enter digits only',
+        type: 'actions',
+        elements: [
+          {
+            type: 'multi_static_select',
+            action_id: ACTION_IDS.MANDATORY,
+            placeholder: {
+              type: 'plain_text',
+              text: 'Choose areas',
+            },
+            options: MANDATORY_FIELDS.map((field) => ({
+              text: { type: 'plain_text', text: field.label },
+              value: field.id,
+            })),
           },
-        },
-        hint: {
-          type: 'plain_text',
-          text: 'How many hours did you work this week? Full week = e.g. 40, part-time accordingly less.',
-        },
+        ],
       },
+    ],
+  });
+}
+
+async function promptNextMandatoryHours(conversation) {
+  const fieldId = conversation.mandatorySelections[conversation.currentMandatoryIndex];
+  if (!fieldId) {
+    await promptDeveloperQuestion(conversation);
+    return;
+  }
+
+  conversation.state = 'awaiting_mandatory_hours';
+  const label = getFieldLabel(mandatoryFieldLabels, fieldId);
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: `How many hours did you spend on *${label}*? Reply with a number.`,
+  });
+}
+
+async function promptDeveloperQuestion(conversation) {
+  conversation.state = 'awaiting_developer_choice';
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: 'Are you a developer?',
+    blocks: [
       {
-        type: 'input',
-        block_id: 'mandatory_block',
-        label: {
-          type: 'plain_text',
-          text: 'Select business areas',
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Are you a developer? If yes, we will log detailed dev buckets.',
         },
-        element: {
-          type: 'multi_static_select',
-          action_id: 'mandatory_select',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Choose every area you worked in this week',
-          },
-          options: MANDATORY_FIELDS.map((field) => ({
-            text: { type: 'plain_text', text: field.label },
-            value: field.id,
-          })),
-        },
-      },
-      {
-        type: 'input',
-        optional: false,
-        block_id: 'developer_block',
-        label: {
-          type: 'plain_text',
-          text: 'Are you a developer?',
-        },
-        element: {
+        accessory: {
           type: 'static_select',
-          action_id: 'developer_choice',
+          action_id: ACTION_IDS.DEVELOPER,
+          placeholder: {
+            type: 'plain_text',
+            text: 'Choose an option',
+          },
           options: [
             { text: { type: 'plain_text', text: 'Yes' }, value: 'yes' },
             { text: { type: 'plain_text', text: 'No' }, value: 'no' },
           ],
         },
       },
+    ],
+  });
+}
+
+async function promptNextDeveloperHours(conversation) {
+  const field = DEVELOPER_FIELDS[conversation.currentDeveloperIndex];
+  if (!conversation.isDeveloper || !field) {
+    await promptProjectSelection(conversation);
+    return;
+  }
+
+  conversation.state = 'awaiting_developer_hours';
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: `Hours for *${field.label}*? Reply with a number or type *skip* to keep it empty.`,
+  });
+}
+
+async function promptProjectSelection(conversation) {
+  conversation.state = 'awaiting_project_selection';
+  if (!conversation.projects.length) {
+    await slackClient.chat.postMessage({
+      channel: conversation.channelId,
+      text: 'No projects found in Notion. Skipping project breakdown.',
+    });
+    conversation.projectsSelected = [];
+    await finalizeConversation(conversation);
+    return;
+  }
+
+  const projectOptions = conversation.projects.map((project) => ({
+    text: { type: 'plain_text', text: normaliseOptionLabel(project.name) },
+    value: project.id,
+  }));
+
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: 'Select the projects you worked on.',
+    blocks: [
       {
-        type: 'input',
-        optional: true,
-        block_id: 'projects_block',
-        label: {
-          type: 'plain_text',
-          text: 'Projects (multi-select)',
+        type: 'section',
+        text: {
+          type: 'mrkdwn',
+          text: 'Select every project from “Alle Projekte Database” that you worked on.',
         },
-        element: {
-          type: 'multi_static_select',
-          action_id: 'projects_select',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Select every project you worked on',
+      },
+      {
+        type: 'actions',
+        elements: [
+          {
+            type: 'multi_static_select',
+            action_id: ACTION_IDS.PROJECTS,
+            placeholder: {
+              type: 'plain_text',
+              text: 'Choose projects',
+            },
+            options: projectOptions,
           },
-          options: projectOptions,
-        },
+        ],
       },
     ],
-  };
+  });
 }
 
-function buildStepTwoView(metadata) {
-  const blocks = [];
-
-  if (metadata.mandatorySelections?.length) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: 'Please enter hours for the selected areas.',
-      },
-    });
-
-    for (const field of metadata.mandatorySelections) {
-      const blockId = buildBlockId('mandatory', field);
-
-      blocks.push({
-        type: 'input',
-        block_id: blockId,
-        label: {
-          type: 'plain_text',
-          text: `${field} Stunden`,
-        },
-        element: {
-          type: 'plain_text_input',
-          action_id: 'value',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Enter digits only',
-          },
-        },
-      });
-    }
-  } else {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: 'Keine allgemeinen Bereiche ausgewählt.',
-      },
-    });
-  }
-
-  if (metadata.isDeveloper) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: '*Developer areas*',
-      },
-    });
-
-    for (const field of DEVELOPER_FIELDS) {
-      const blockId = buildBlockId('developer', field.id);
-
-      blocks.push({
-        type: 'input',
-        block_id: blockId,
-        optional: true,
-        label: {
-          type: 'plain_text',
-          text: `${field.label} Stunden`,
-        },
-        element: {
-          type: 'plain_text_input',
-          action_id: 'value',
-          placeholder: {
-            type: 'plain_text',
-            text: 'Enter digits only',
-          },
-        },
-      });
-    }
-  }
-
-  return {
-    type: 'modal',
-    callback_id: STEP_TWO_ID,
-    private_metadata: serialiseMetadata(metadata),
-    title: {
-      type: 'plain_text',
-      text: 'Categories',
-    },
-    submit: {
-      type: 'plain_text',
-      text: metadata.projects?.length ? 'Next' : 'Save',
-    },
-    close: {
-      type: 'plain_text',
-      text: 'Back',
-    },
-    blocks,
-  };
-}
-
-function buildStepThreeView(metadata) {
-  const projects = metadata.projects || [];
-  const projectIndex = metadata.projectIndex || 0;
-  const currentProject = projects[projectIndex];
-
-  const blocks = [];
-
+async function promptNextProjectHours(conversation) {
+  const currentProject = conversation.projectsSelected[conversation.currentProjectIndex];
   if (!currentProject) {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: 'No projects selected.',
-      },
-    });
-  } else {
-    blocks.push({
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text: `Project ${projectIndex + 1} of ${projects.length}`,
-      },
-    });
-
-    blocks.push({
-      type: 'input',
-      block_id: 'project_hours_block',
-      label: {
-        type: 'plain_text',
-        text: `${currentProject.name} (hours)`,
-      },
-      element: {
-        type: 'plain_text_input',
-        action_id: 'value',
-        placeholder: {
-          type: 'plain_text',
-          text: 'Enter digits only',
-        },
-      },
-    });
+    await finalizeConversation(conversation);
+    return;
   }
 
-  return {
-    type: 'modal',
-    callback_id: STEP_THREE_ID,
-    private_metadata: serialiseMetadata(metadata),
-    title: {
-      type: 'plain_text',
-      text: 'Project work',
-    },
-    submit: {
-      type: 'plain_text',
-      text: projectIndex + 1 >= projects.length ? 'Submit' : 'Next project',
-    },
-    close: {
-      type: 'plain_text',
-      text: 'Back',
-    },
-    blocks,
-  };
+  conversation.state = 'awaiting_project_hours';
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: `How many hours did you work on *${currentProject.name}*? Reply with a number.`,
+  });
+}
+
+async function finalizeConversation(conversation) {
+  conversation.state = 'saving';
+  try {
+    await saveCapacityToNotion({
+      pageId: null,
+      personId: conversation.personId,
+      contractHours: conversation.contractHours,
+      mandatoryValues: conversation.mandatoryValues,
+      developerValues: conversation.developerValues,
+      weekInfo: conversation.weekInfo,
+      projects: conversation.projectsSelected,
+      projectHours: conversation.projectHours,
+    });
+    await slackClient.chat.postMessage({
+      channel: conversation.channelId,
+      text: 'Capacity saved. Thank you!',
+    });
+  } catch (error) {
+    await slackClient.chat.postMessage({
+      channel: conversation.channelId,
+      text: 'Saving your capacity failed. Please try again later.',
+    });
+    throw error;
+  } finally {
+    resetConversation(conversation.channelId);
+  }
+}
+
+async function handleNumericAnswer({
+  conversation,
+  text,
+  onSuccess,
+  allowSkip = false,
+}) {
+  const trimmed = text.trim();
+  if (allowSkip && trimmed.toLowerCase() === 'skip') {
+    await onSuccess(null);
+    return;
+  }
+
+  const value = extractNumber(trimmed);
+  if (value === null) {
+    await slackClient.chat.postMessage({
+      channel: conversation.channelId,
+      text: 'Please send a valid number (e.g., 12 or 7.5).',
+    });
+    return;
+  }
+
+  await onSuccess(value);
 }
 
 function extractNumber(value) {
@@ -705,23 +710,106 @@ function extractNumber(value) {
   return parsed;
 }
 
-function getInputValue(values, blockId, actionId = 'value') {
-  const block = values[blockId];
-  if (!block) {
-    return '';
+async function cancelConversation(conversation) {
+  await slackClient.chat.postMessage({
+    channel: conversation.channelId,
+    text: 'Conversation cancelled. Start again with /capacity-ping when ready.',
+  });
+  resetConversation(conversation.channelId);
+}
+
+async function handleConversationText(conversation, rawText = '') {
+  if (!conversation || !rawText) {
+    return;
   }
 
-  const action = block[actionId];
-  if (action && typeof action.value === 'string') {
-    return action.value;
+  const trimmed = rawText.trim();
+  if (!trimmed) {
+    await slackClient.chat.postMessage({
+      channel: conversation.channelId,
+      text: 'Please reply with some text or type *cancel*.',
+    });
+    return;
   }
 
-  const first = Object.values(block)[0];
-  if (first && typeof first.value === 'string') {
-    return first.value;
+  if (trimmed.toLowerCase() === 'cancel') {
+    await cancelConversation(conversation);
+    return;
   }
 
-  return '';
+  switch (conversation.state) {
+    case 'awaiting_contract_hours':
+      await handleNumericAnswer({
+        conversation,
+        text: trimmed,
+        onSuccess: async (value) => {
+          conversation.contractHours = value;
+          await promptMandatorySelection(conversation);
+        },
+      });
+      break;
+    case 'awaiting_mandatory_hours': {
+      const fieldId =
+        conversation.mandatorySelections[conversation.currentMandatoryIndex];
+      if (!fieldId) {
+        await promptDeveloperQuestion(conversation);
+        return;
+      }
+      await handleNumericAnswer({
+        conversation,
+        text: trimmed,
+        onSuccess: async (value) => {
+          conversation.mandatoryValues[fieldId] = value;
+          conversation.currentMandatoryIndex += 1;
+          await promptNextMandatoryHours(conversation);
+        },
+      });
+      break;
+    }
+    case 'awaiting_developer_hours': {
+      const field = DEVELOPER_FIELDS[conversation.currentDeveloperIndex];
+      if (!field) {
+        await promptProjectSelection(conversation);
+        return;
+      }
+
+      await handleNumericAnswer({
+        conversation,
+        text: trimmed,
+        allowSkip: true,
+        onSuccess: async (value) => {
+          conversation.developerValues[field.id] = value;
+          conversation.currentDeveloperIndex += 1;
+          await promptNextDeveloperHours(conversation);
+        },
+      });
+      break;
+    }
+    case 'awaiting_project_hours': {
+      const currentProject =
+        conversation.projectsSelected[conversation.currentProjectIndex];
+      if (!currentProject) {
+        await finalizeConversation(conversation);
+        return;
+      }
+
+      await handleNumericAnswer({
+        conversation,
+        text: trimmed,
+        onSuccess: async (value) => {
+          conversation.projectHours[currentProject.id] = value;
+          conversation.currentProjectIndex += 1;
+          await promptNextProjectHours(conversation);
+        },
+      });
+      break;
+    }
+    default:
+      await slackClient.chat.postMessage({
+        channel: conversation.channelId,
+        text: 'Please use the buttons above to continue.',
+      });
+  }
 }
 
 async function archiveAdditionalEntries(personId, weekName) {
@@ -876,75 +964,14 @@ async function saveCapacityToNotion(metadata) {
   }
 }
 
-async function notifyUser(userId, text) {
-  assertSlackClient();
-  const dm = await slackClient.conversations.open({ users: userId });
-  if (!dm?.channel?.id) {
-    return;
-  }
-
-  await slackClient.chat.postMessage({
-    channel: dm.channel.id,
-    text,
-  });
-}
-
-async function openCapacityModal(triggerId) {
-  assertSlackClient();
-  assertNotionConfig();
-
-  const loadingView = buildLoadingView();
-  const openResponse = await slackClient.views.open({
-    trigger_id: triggerId,
-    view: loadingView,
-  });
-
-  const viewId = openResponse?.view?.id;
-
-  try {
-    const [people, projects] = await Promise.all([
-      fetchNotionPeople(),
-      fetchProjects(),
-    ]);
-
-    if (!people.length) {
-      throw new Error(
-        'No Notion users found. Please share the database with this integration.'
-      );
-    }
-
-    const weekInfo = getWeekBounds();
-    const stepOneView = buildStepOneView({ people, projects, weekInfo });
-
-    await slackClient.views.update({
-      view_id: viewId,
-      view: stepOneView,
-    });
-  } catch (error) {
-    if (viewId) {
-      await slackClient.views.update({
-        view_id: viewId,
-        view: buildErrorView(
-          'Unable to load the form. Please try again.'
-        ),
-      });
-    }
-    throw error;
-  }
-}
-
-function extractSelectedProjects(selected = []) {
-  return selected.map((option) => ({
-    id: option.value,
-    name: option.text?.text || 'Projekt',
-  }));
-}
-
 if (app) {
   app.action(PROMPT_BUTTON_ACTION, async ({ ack, body, logger }) => {
     await ack();
     try {
-      await openCapacityModal(body.trigger_id);
+      await startCapacityConversation({
+        userId: body.user?.id,
+        channelId: body.channel?.id,
+      });
     } catch (error) {
       logger?.error?.(error);
     }
@@ -958,8 +985,11 @@ if (app) {
         await sendCapacityPrompts();
         await respond('Sent the capacity reminders.');
       } else {
-        await openCapacityModal(body.trigger_id);
-        await respond('Opened the capacity modal for you.');
+        await startCapacityConversation({
+          userId: body.user_id,
+          channelId: null,
+        });
+        await respond('Check your DM to answer the questions.');
       }
     } catch (error) {
       logger?.error?.(error);
@@ -967,228 +997,161 @@ if (app) {
     }
   });
 
-  app.view(STEP_ONE_ID, async ({ ack, body, view, logger }) => {
-    try {
-      const values = view.state.values;
-      const person =
-        values.person_block.person_select.selected_option?.value || null;
-      const contractRaw = values.contract_block.contract_input.value;
-      const contractHours = extractNumber(contractRaw);
-      const mandatorySelections =
-        values.mandatory_block.mandatory_select.selected_options?.map(
-          (opt) => opt.value
-        ) || [];
-      const developerChoice =
-        values.developer_block.developer_choice.selected_option?.value ===
-        'yes';
-      const projects = extractSelectedProjects(
-        values.projects_block.projects_select.selected_options || []
-      );
-
-      const errors = {};
-      if (!person) {
-        errors.person_block = 'Please choose a person.';
-      }
-      if (contractHours === null) {
-        errors.contract_block = 'Please enter a number.';
-      }
-
-      if (Object.keys(errors).length) {
-        await ack({
-          response_action: 'errors',
-          errors,
-        });
-        return;
-      }
-
-      const weekInfo = getWeekBounds();
-      const metadata = {
-        userId: body.user.id,
-        pageId: null,
-        personId: person,
-        contractHours,
-        weekInfo,
-        mandatorySelections,
-        isDeveloper: developerChoice,
-        projects,
-      };
-
-      const needsTaskInputs =
-        (metadata.mandatorySelections?.length || 0) > 0 || metadata.isDeveloper;
-
-      if (needsTaskInputs) {
-        await ack({
-          response_action: 'push',
-          view: buildStepTwoView(metadata),
-        });
-        return;
-      }
-
-      if (metadata.projects?.length) {
-        metadata.mandatoryValues = {};
-        metadata.developerValues = {};
-        metadata.projectHours = metadata.projectHours || {};
-        metadata.projectIndex = 0;
-        await ack({
-          response_action: 'push',
-          view: buildStepThreeView(metadata),
-        });
-        return;
-      }
-
-      metadata.mandatoryValues = {};
-      metadata.developerValues = {};
-      await ack({ response_action: 'clear' });
+  app.action(
+    ACTION_IDS.PERSON,
+    async ({ ack, body, action, logger }) => {
+      await ack();
       try {
-        await saveCapacityToNotion(metadata);
-        await notifyUser(metadata.userId, 'Thanks — capacity saved.');
+        const channelId = body.channel?.id;
+        const conversation = channelId
+          ? activeConversations.get(channelId)
+          : null;
+        if (!conversation || conversation.userId !== body.user?.id) {
+          await notifyStaleConversation(body.user?.id, channelId);
+          return;
+        }
+
+        const selected = action?.selected_option?.value;
+        if (!selected) {
+          await slackClient.chat.postMessage({
+            channel: conversation.channelId,
+            text: 'Please choose a person to continue.',
+          });
+          return;
+        }
+
+        conversation.personId = selected;
+        await promptContractHours(conversation);
       } catch (error) {
         logger?.error?.(error);
-        await notifyUser(
-          metadata.userId,
-          'Saving your capacity failed. Please try again later.'
+      }
+    }
+  );
+
+  app.action(
+    ACTION_IDS.MANDATORY,
+    async ({ ack, body, action, logger }) => {
+      await ack();
+      try {
+        const channelId = body.channel?.id;
+        const conversation = channelId
+          ? activeConversations.get(channelId)
+          : null;
+        if (!conversation || conversation.userId !== body.user?.id) {
+          await notifyStaleConversation(body.user?.id, channelId);
+          return;
+        }
+
+        const selections =
+          action?.selected_options?.map((option) => option.value) || [];
+        conversation.mandatorySelections = selections;
+        conversation.mandatoryValues = {};
+        conversation.currentMandatoryIndex = 0;
+
+        if (selections.length) {
+          await promptNextMandatoryHours(conversation);
+        } else {
+          await promptDeveloperQuestion(conversation);
+        }
+      } catch (error) {
+        logger?.error?.(error);
+      }
+    }
+  );
+
+  app.action(
+    ACTION_IDS.DEVELOPER,
+    async ({ ack, body, action, logger }) => {
+      await ack();
+      try {
+        const channelId = body.channel?.id;
+        const conversation = channelId
+          ? activeConversations.get(channelId)
+          : null;
+        if (!conversation || conversation.userId !== body.user?.id) {
+          await notifyStaleConversation(body.user?.id, channelId);
+          return;
+        }
+
+        const selectedValue = action?.selected_option?.value;
+        conversation.isDeveloper = selectedValue === 'yes';
+        conversation.developerValues = {};
+        conversation.currentDeveloperIndex = 0;
+
+        if (conversation.isDeveloper) {
+          await promptNextDeveloperHours(conversation);
+        } else {
+          await promptProjectSelection(conversation);
+        }
+      } catch (error) {
+        logger?.error?.(error);
+      }
+    }
+  );
+
+  app.action(
+    ACTION_IDS.PROJECTS,
+    async ({ ack, body, action, logger }) => {
+      await ack();
+      try {
+        const channelId = body.channel?.id;
+        const conversation = channelId
+          ? activeConversations.get(channelId)
+          : null;
+        if (!conversation || conversation.userId !== body.user?.id) {
+          await notifyStaleConversation(body.user?.id, channelId);
+          return;
+        }
+
+        const projectLookup = new Map(
+          (conversation.projects || []).map((project) => [project.id, project])
         );
-      }
-    } catch (error) {
-      logger?.error?.(error);
-      await ack({
-        response_action: 'errors',
-        errors: {
-          contract_block: 'Something went wrong. Please try again.',
-        },
-      });
-    }
-  });
+        const selected =
+          action?.selected_options?.map((option) => {
+            const fromNotion = projectLookup.get(option.value);
+            if (fromNotion) {
+              return fromNotion;
+            }
+            return {
+              id: option.value,
+              name: option.text?.text || 'Projekt',
+            };
+          }) || [];
+        conversation.projectsSelected = selected;
+        conversation.projectHours = {};
+        conversation.currentProjectIndex = 0;
 
-  app.view(STEP_TWO_ID, async ({ ack, body, view, logger }) => {
-    const metadata = parseMetadata(view.private_metadata);
-    const values = view.state.values;
-    const errors = {};
-
-    const mandatoryValues = {};
-    for (const field of metadata.mandatorySelections || []) {
-      const blockId = buildBlockId('mandatory', field);
-      const raw = getInputValue(values, blockId);
-      const extracted = extractNumber(raw);
-      if (extracted === null) {
-        errors[blockId] = 'Please enter a number.';
-      } else {
-        mandatoryValues[field] = extracted;
-      }
-    }
-
-    const developerValues = {};
-    if (metadata.isDeveloper) {
-      for (const field of DEVELOPER_FIELDS) {
-        const blockId = buildBlockId('developer', field.id);
-        const raw = getInputValue(values, blockId);
-        const extracted = extractNumber(raw);
-        developerValues[field.id] = extracted;
-      }
-    }
-
-    if (Object.keys(errors).length) {
-      await ack({
-        response_action: 'errors',
-        errors,
-      });
-      return;
-    }
-
-    metadata.mandatoryValues = mandatoryValues;
-    metadata.developerValues = developerValues;
-
-    if (metadata.projects?.length) {
-      metadata.projectHours = metadata.projectHours || {};
-      metadata.projectIndex = 0;
-      metadata.projectHours = metadata.projectHours || {};
-      metadata.projectIndex = 0;
-      await ack({
-        response_action: 'push',
-        view: buildStepThreeView(metadata),
-      });
-      return;
-    }
-
-    await ack({ response_action: 'clear' });
-    try {
-      await saveCapacityToNotion(metadata);
-      await notifyUser(metadata.userId, 'Thanks — capacity saved.');
-    } catch (error) {
-      logger?.error?.(error);
-      await notifyUser(
-        metadata.userId,
-        'Saving your capacity failed. Please try again later.'
-      );
-    }
-  });
-
-  app.view(STEP_THREE_ID, async ({ ack, view, logger }) => {
-    const metadata = parseMetadata(view.private_metadata);
-    const values = view.state.values;
-    const projects = metadata.projects || [];
-    const projectIndex = metadata.projectIndex || 0;
-    const currentProject = projects[projectIndex];
-
-    if (!currentProject) {
-      await ack({ response_action: 'clear' });
-      await notifyUser(
-        metadata.userId,
-        'No projects were selected, so nothing was saved.'
-      );
-      return;
-    }
-
-    const raw = getInputValue(values, 'project_hours_block');
-    const extracted = extractNumber(raw);
-    if (extracted === null) {
-      await ack({
-        response_action: 'errors',
-        errors: {
-          project_hours_block: 'Please enter a number.',
-        },
-      });
-      return;
-    }
-
-    const projectHours = metadata.projectHours || {};
-    projectHours[currentProject.id] = extracted;
-    metadata.projectHours = projectHours;
-
-    if (projectIndex + 1 < projects.length) {
-      metadata.projectIndex = projectIndex + 1;
-      metadata.private_metadata = serialiseMetadata(metadata);
-      let newView;
-      try {
-        newView = buildStepThreeView(metadata);
+        if (selected.length) {
+          await promptNextProjectHours(conversation);
+        } else {
+          await finalizeConversation(conversation);
+        }
       } catch (error) {
         logger?.error?.(error);
-        await ack({
-          response_action: 'errors',
-          errors: {
-            project_hours_block: 'Could not load the next project. Try again.',
-          },
-        });
+      }
+    }
+  );
+
+  app.message(async ({ message, logger }) => {
+    try {
+      if (
+        !message ||
+        message.subtype ||
+        !message.channel ||
+        !message.user ||
+        message.bot_id
+      ) {
         return;
       }
 
-      await ack({
-        response_action: 'update',
-        view: newView,
-      });
-      return;
-    }
+      const conversation = activeConversations.get(message.channel);
+      if (!conversation || conversation.userId !== message.user) {
+        return;
+      }
 
-    await ack({ response_action: 'clear' });
-    try {
-      await saveCapacityToNotion(metadata);
-      await notifyUser(metadata.userId, 'Capacity and projects saved. Thank you!');
+      await handleConversationText(conversation, message.text || '');
     } catch (error) {
       logger?.error?.(error);
-      await notifyUser(
-        metadata.userId,
-        'We could not save your project hours. Please try again later.'
-      );
     }
   });
 }
