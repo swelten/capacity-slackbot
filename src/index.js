@@ -37,9 +37,14 @@ const PROMPT_TEXT =
 
 const ACTION_IDS = {
   PERSON: 'conversation_select_person',
-  MANDATORY: 'conversation_select_mandatory',
+  MANDATORY: 'conversation_select_mandatory_single',
   DEVELOPER: 'conversation_select_developer',
-  PROJECTS: 'conversation_select_projects',
+  PROJECTS: 'conversation_select_project_single',
+};
+
+const SELECT_SPECIAL_VALUES = {
+  DONE: '__done__',
+  CLEAR: '__clear__',
 };
 
 const MANDATORY_FIELDS = [
@@ -493,6 +498,28 @@ async function promptContractHours(conversation) {
 
 async function promptMandatorySelection(conversation) {
   conversation.state = 'awaiting_mandatory_selection';
+  const selectedLabels = conversation.mandatorySelections.map((id) =>
+    getFieldLabel(mandatoryFieldLabels, id)
+  );
+
+  const availableOptions = MANDATORY_FIELDS.filter(
+    (field) => !conversation.mandatorySelections.includes(field.id)
+  ).map((field) => ({
+    text: { type: 'plain_text', text: field.label },
+    value: field.id,
+  }));
+
+  const specialOptions = [
+    {
+      text: { type: 'plain_text', text: 'Done selecting' },
+      value: SELECT_SPECIAL_VALUES.DONE,
+    },
+    {
+      text: { type: 'plain_text', text: 'Clear selections' },
+      value: SELECT_SPECIAL_VALUES.CLEAR,
+    },
+  ];
+
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
     text: 'Select the business areas you worked in.',
@@ -501,23 +528,32 @@ async function promptMandatorySelection(conversation) {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: 'Select every business area you contributed to this week.',
+          text:
+            'Select every business area you contributed to this week.\nUse the dropdown to add one area at a time, then choose *Done selecting* when finished. Type *none* to skip.',
         },
+      },
+      {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: selectedLabels.length
+              ? `Current selection: ${selectedLabels.join(', ')}`
+              : 'No areas selected yet.',
+          },
+        ],
       },
       {
         type: 'actions',
         elements: [
           {
-            type: 'multi_static_select',
+            type: 'static_select',
             action_id: ACTION_IDS.MANDATORY,
             placeholder: {
               type: 'plain_text',
-              text: 'Choose areas',
+              text: 'Add an area',
             },
-            options: MANDATORY_FIELDS.map((field) => ({
-              text: { type: 'plain_text', text: field.label },
-              value: field.id,
-            })),
+            options: [...availableOptions, ...specialOptions],
           },
         ],
       },
@@ -600,6 +636,20 @@ async function promptProjectSelection(conversation) {
     value: project.id,
   }));
 
+  const availableOptions = projectOptions.filter(
+    (option) => !conversation.projectsSelected.find((p) => p.id === option.value)
+  );
+  const specialOptions = [
+    {
+      text: { type: 'plain_text', text: 'Done selecting projects' },
+      value: SELECT_SPECIAL_VALUES.DONE,
+    },
+    {
+      text: { type: 'plain_text', text: 'Clear selected projects' },
+      value: SELECT_SPECIAL_VALUES.CLEAR,
+    },
+  ];
+
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
     text: 'Select the projects you worked on.',
@@ -612,16 +662,29 @@ async function promptProjectSelection(conversation) {
         },
       },
       {
+        type: 'context',
+        elements: [
+          {
+            type: 'mrkdwn',
+            text: conversation.projectsSelected.length
+              ? `Current projects: ${conversation.projectsSelected
+                  .map((p) => p.name)
+                  .join(', ')}`
+              : 'No projects selected yet. Choose *Done selecting projects* or type *none* if you did not work on any.',
+          },
+        ],
+      },
+      {
         type: 'actions',
         elements: [
           {
-            type: 'multi_static_select',
+            type: 'static_select',
             action_id: ACTION_IDS.PROJECTS,
             placeholder: {
               type: 'plain_text',
-              text: 'Choose projects',
+              text: 'Add a project',
             },
-            options: projectOptions,
+            options: [...availableOptions, ...specialOptions],
           },
         ],
       },
@@ -738,6 +801,43 @@ async function handleConversationText(conversation, rawText = '') {
   }
 
   switch (conversation.state) {
+    case 'awaiting_mandatory_selection': {
+      const lower = trimmed.toLowerCase();
+      if (['none', 'skip'].includes(lower)) {
+        conversation.mandatorySelections = [];
+        conversation.mandatoryValues = {};
+        conversation.currentMandatoryIndex = 0;
+        await promptDeveloperQuestion(conversation);
+        return;
+      }
+      if (['done', 'finish', 'next'].includes(lower)) {
+        conversation.mandatoryValues = {};
+        conversation.currentMandatoryIndex = 0;
+        if (conversation.mandatorySelections.length) {
+          await promptNextMandatoryHours(conversation);
+        } else {
+          await promptDeveloperQuestion(conversation);
+        }
+        return;
+      }
+      if (lower === 'clear') {
+        conversation.mandatorySelections = [];
+        conversation.mandatoryValues = {};
+        conversation.currentMandatoryIndex = 0;
+        await slackClient.chat.postMessage({
+          channel: conversation.channelId,
+          text: 'Cleared the selected business areas.',
+        });
+        await promptMandatorySelection(conversation);
+        return;
+      }
+      await slackClient.chat.postMessage({
+        channel: conversation.channelId,
+        text:
+          'Use the dropdown to add areas one by one, or type *done* when you are finished, *none* to skip, or *clear* to reset.',
+      });
+      break;
+    }
     case 'awaiting_contract_hours':
       await handleNumericAnswer({
         conversation,
@@ -801,6 +901,43 @@ async function handleConversationText(conversation, rawText = '') {
           conversation.currentProjectIndex += 1;
           await promptNextProjectHours(conversation);
         },
+      });
+      break;
+    }
+    case 'awaiting_project_selection': {
+      const lower = trimmed.toLowerCase();
+      if (['none', 'skip'].includes(lower)) {
+        conversation.projectsSelected = [];
+        conversation.projectHours = {};
+        conversation.currentProjectIndex = 0;
+        await finalizeConversation(conversation);
+        return;
+      }
+      if (['done', 'finish', 'next'].includes(lower)) {
+        conversation.projectHours = {};
+        conversation.currentProjectIndex = 0;
+        if (conversation.projectsSelected.length) {
+          await promptNextProjectHours(conversation);
+        } else {
+          await finalizeConversation(conversation);
+        }
+        return;
+      }
+      if (lower === 'clear') {
+        conversation.projectsSelected = [];
+        conversation.projectHours = {};
+        conversation.currentProjectIndex = 0;
+        await slackClient.chat.postMessage({
+          channel: conversation.channelId,
+          text: 'Cleared selected projects.',
+        });
+        await promptProjectSelection(conversation);
+        return;
+      }
+      await slackClient.chat.postMessage({
+        channel: conversation.channelId,
+        text:
+          'Use the dropdown to add projects, or type *done* when finished, *none* if there were no projects, or *clear* to reset.',
       });
       break;
     }
@@ -1042,17 +1179,50 @@ if (app) {
           return;
         }
 
-        const selections =
-          action?.selected_options?.map((option) => option.value) || [];
-        conversation.mandatorySelections = selections;
-        conversation.mandatoryValues = {};
-        conversation.currentMandatoryIndex = 0;
-
-        if (selections.length) {
-          await promptNextMandatoryHours(conversation);
-        } else {
-          await promptDeveloperQuestion(conversation);
+        const value = action?.selected_option?.value;
+        if (!value) {
+          await promptMandatorySelection(conversation);
+          return;
         }
+
+        if (value === SELECT_SPECIAL_VALUES.CLEAR) {
+          conversation.mandatorySelections = [];
+          conversation.mandatoryValues = {};
+          conversation.currentMandatoryIndex = 0;
+          await slackClient.chat.postMessage({
+            channel: conversation.channelId,
+            text: 'Cleared the selected business areas.',
+          });
+          await promptMandatorySelection(conversation);
+          return;
+        }
+
+        if (value === SELECT_SPECIAL_VALUES.DONE) {
+          conversation.mandatoryValues = {};
+          conversation.currentMandatoryIndex = 0;
+          if (conversation.mandatorySelections.length) {
+            await promptNextMandatoryHours(conversation);
+          } else {
+            await promptDeveloperQuestion(conversation);
+          }
+          return;
+        }
+
+        if (conversation.mandatorySelections.includes(value)) {
+          await slackClient.chat.postMessage({
+            channel: conversation.channelId,
+            text: 'That area is already selected. Choose another or select Done.',
+          });
+          await promptMandatorySelection(conversation);
+          return;
+        }
+
+        conversation.mandatorySelections.push(value);
+        await slackClient.chat.postMessage({
+          channel: conversation.channelId,
+          text: `Added *${getFieldLabel(mandatoryFieldLabels, value)}*. Select more or choose *Done selecting*.`,
+        });
+        await promptMandatorySelection(conversation);
       } catch (error) {
         logger?.error?.(error);
       }
@@ -1103,29 +1273,59 @@ if (app) {
           return;
         }
 
+        const value = action?.selected_option?.value;
+        if (!value) {
+          await promptProjectSelection(conversation);
+          return;
+        }
+
+        if (value === SELECT_SPECIAL_VALUES.CLEAR) {
+          conversation.projectsSelected = [];
+          conversation.projectHours = {};
+          conversation.currentProjectIndex = 0;
+          await slackClient.chat.postMessage({
+            channel: conversation.channelId,
+            text: 'Cleared selected projects.',
+          });
+          await promptProjectSelection(conversation);
+          return;
+        }
+
+        if (value === SELECT_SPECIAL_VALUES.DONE) {
+          conversation.projectHours = {};
+          conversation.currentProjectIndex = 0;
+          if (conversation.projectsSelected.length) {
+            await promptNextProjectHours(conversation);
+          } else {
+            await finalizeConversation(conversation);
+          }
+          return;
+        }
+
+        if (conversation.projectsSelected.find((project) => project.id === value)) {
+          await slackClient.chat.postMessage({
+            channel: conversation.channelId,
+            text: 'That project is already selected. Choose another or select Done.',
+          });
+          await promptProjectSelection(conversation);
+          return;
+        }
+
         const projectLookup = new Map(
           (conversation.projects || []).map((project) => [project.id, project])
         );
-        const selected =
-          action?.selected_options?.map((option) => {
-            const fromNotion = projectLookup.get(option.value);
-            if (fromNotion) {
-              return fromNotion;
-            }
-            return {
-              id: option.value,
-              name: option.text?.text || 'Projekt',
-            };
-          }) || [];
-        conversation.projectsSelected = selected;
-        conversation.projectHours = {};
-        conversation.currentProjectIndex = 0;
+        const project =
+          projectLookup.get(value) || {
+            id: value,
+            name: action?.selected_option?.text?.text || 'Projekt',
+          };
 
-        if (selected.length) {
-          await promptNextProjectHours(conversation);
-        } else {
-          await finalizeConversation(conversation);
-        }
+        conversation.projectsSelected.push(project);
+        await slackClient.chat.postMessage({
+          channel: conversation.channelId,
+          text: `Added project *${project.name}*. Select more or choose *Done selecting projects*.`,
+        });
+        await promptProjectSelection(conversation);
       } catch (error) {
         logger?.error?.(error);
       }
