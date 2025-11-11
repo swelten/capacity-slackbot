@@ -29,6 +29,7 @@ oauth_config:
       - groups:history
       - channels:read
       - users:read
+      - files:write
 
 settings:
   event_subscriptions:

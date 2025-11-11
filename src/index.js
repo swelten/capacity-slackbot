@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { App, AwsLambdaReceiver } = require('@slack/bolt');
 const { WebClient } = require('@slack/web-api');
 const { Client: NotionClient } = require('@notionhq/client');
@@ -82,6 +84,8 @@ const DEVELOPER_FIELDS = [
 ];
 
 const activeConversations = new Map();
+const unicornImagePath = path.join(__dirname, '..', 'unicorn.png');
+let unicornImageCache = null;
 
 const mandatoryFieldLabels = new Map(
   MANDATORY_FIELDS.map((field) => [field.id, field.label])
@@ -175,6 +179,42 @@ async function deleteConversationState(channelId) {
       Key: { channelId },
     })
     .promise();
+}
+
+async function loadUnicornImage() {
+  if (unicornImageCache) {
+    return unicornImageCache;
+  }
+
+  try {
+    unicornImageCache = await fs.promises.readFile(unicornImagePath);
+    return unicornImageCache;
+  } catch (error) {
+    console.error('Failed to read unicorn image', error);
+    return null;
+  }
+}
+
+async function sendCelebrationImage(channelId) {
+  if (!slackClient || !channelId) {
+    return;
+  }
+
+  try {
+    const imageBuffer = await loadUnicornImage();
+    if (!imageBuffer) {
+      return;
+    }
+
+    await slackClient.files.uploadV2({
+      channel_id: channelId,
+      filename: 'capacity-unicorn.png',
+      file: imageBuffer,
+      title: 'Capacity saved!',
+    });
+  } catch (error) {
+    console.error('Failed to send celebration image', error);
+  }
 }
 
 function assertSlackClient() {
@@ -882,6 +922,7 @@ async function finalizeConversation(conversation) {
       channel: conversation.channelId,
       text: 'Capacity saved. Thank you!',
     });
+    await sendCelebrationImage(conversation.channelId);
   } catch (error) {
     await slackClient.chat.postMessage({
       channel: conversation.channelId,

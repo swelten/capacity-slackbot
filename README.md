@@ -38,6 +38,7 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 - **Chat flow** – The bot walks each user through the same three logical steps (base data → task/category hours → project hours) inside the DM. Every answer is captured in real time; once the last question is answered the entry is written to Notion, extra project pages are created/archived as needed, and the user receives a confirmation DM.
 - *Note:* The Slack manifest enables the App Home “Messages” tab so teammates can reply to the bot in DMs. Re-install the app after deploying the new manifest to apply this change.
 - *Persistence:* Conversation progress is stored in DynamoDB (see `CONVERSATION_TABLE`) so users can pause mid-flow without losing their answers. Enable DynamoDB TTL on the table to clean up abandoned sessions automatically.
+- *Media:* After saving, the bot uploads `unicorn.png` as a celebratory image, so the Slack app needs the `files:write` scope in addition to the chat scopes above.
 
 ### Scheduling
 
