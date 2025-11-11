@@ -25,6 +25,7 @@
     "@notionhq/client": "^2.2.14",
     "@slack/bolt": "^4.6.0",
     "@slack/web-api": "^7.12.0",
+    "aws-sdk": "^2.1692.0",
     "luxon": "^3.7.2"
   }
 }
