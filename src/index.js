@@ -50,7 +50,7 @@ const configuredTargets = (process.env.CAPACITY_TARGETS || '')
 
 const PROMPT_BUTTON_ACTION = 'open_capacity_modal';
 const PROMPT_TEXT =
-  'Please log your capacity for the current calendar week. Click the button below to answer the questions.';
+  'Please log your capacity for the last calendar week. Click the button below to answer the questions.';
 
 const ACTION_IDS = {
   PERSON: 'conversation_select_person',
@@ -202,17 +202,65 @@ function getWeekBounds(referenceDate = DateTime.now().setZone(timezone)) {
   }
 
   const target = base.minus({ weeks: 1 });
+  return getWeekBoundsFor({
+    weekNumber: target.weekNumber,
+    weekYear: target.weekYear,
+  });
+}
 
-  const monday = target.minus({ days: target.weekday - 1 }).startOf('day');
+function getWeekBoundsFor({ weekNumber, weekYear }) {
+  let monday = DateTime.fromObject(
+    { weekYear, weekNumber, weekday: 1 },
+    { zone: timezone }
+  );
+
+  if (!monday.isValid) {
+    const fallback = DateTime.now().setZone(timezone);
+    monday = fallback.startOf('week');
+    weekNumber = fallback.weekNumber;
+    weekYear = fallback.weekYear;
+  }
+
+  monday = monday.startOf('day');
   const sunday = monday.plus({ days: 6 }).endOf('day');
-  const weekNumber = target.weekNumber;
 
   return {
     weekNumber,
+    weekYear,
     weekName: `KW ${String(weekNumber).padStart(2, '0')}`,
     start: monday.toISODate(),
     end: sunday.toISODate(),
   };
+}
+
+function parseWeekArgument(input = '') {
+  const trimmed = input.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const match = trimmed.match(/^kw\s*0*([0-9]{1,2})(?:\s+([0-9]{4}))?$/i);
+  if (!match) {
+    return null;
+  }
+
+  const weekNumber = Number.parseInt(match[1], 10);
+  if (!Number.isFinite(weekNumber) || weekNumber < 1 || weekNumber > 53) {
+    return null;
+  }
+
+  let weekYear;
+  if (match[2]) {
+    weekYear = Number.parseInt(match[2], 10);
+  } else {
+    weekYear = DateTime.now().setZone(timezone).weekYear;
+  }
+
+  if (!Number.isFinite(weekYear)) {
+    return null;
+  }
+
+  return getWeekBoundsFor({ weekNumber, weekYear });
 }
 
 async function resolveChannelId(target) {
@@ -285,13 +333,13 @@ async function sendCapacityPrompts() {
 
     await slackClient.chat.postMessage({
       channel: channelId,
-      text: `${PROMPT_TEXT} (${weekInfo.weekName})`,
+      text: `${PROMPT_TEXT} (${weekInfo.weekName} - last week)`,
       blocks: [
         {
           type: 'section',
           text: {
             type: 'mrkdwn',
-            text: `*${weekInfo.weekName}*\n${PROMPT_TEXT}`,
+            text: `*${weekInfo.weekName}* (last week)\n${PROMPT_TEXT}`,
           },
         },
         {
@@ -299,7 +347,7 @@ async function sendCapacityPrompts() {
           elements: [
             {
               type: 'mrkdwn',
-            text: `Range: ${weekInfo.start} to ${weekInfo.end}`,
+            text: `Range: ${weekInfo.start} to ${weekInfo.end} (last week)`,
             },
           ],
         },
@@ -488,7 +536,7 @@ async function notifyStaleConversation(userId, channelId) {
   }
 }
 
-async function startCapacityConversation({ userId, channelId }) {
+async function startCapacityConversation({ userId, channelId, weekInfo }) {
   assertSlackClient();
   assertNotionConfig();
 
@@ -515,11 +563,12 @@ async function startCapacityConversation({ userId, channelId }) {
     return;
   }
 
-  const weekInfo = getWeekBounds();
+  const resolvedWeekInfo = weekInfo || getWeekBounds();
+  const weekLabel = weekInfo ? '' : ' (last week)';
   const conversation = {
     userId,
     channelId: dmChannelId,
-    weekInfo,
+    weekInfo: resolvedWeekInfo,
     people,
     projects,
     personId: null,
@@ -540,13 +589,13 @@ async function startCapacityConversation({ userId, channelId }) {
 
   await slackClient.chat.postMessage({
     channel: dmChannelId,
-    text: `Let's log your capacity for ${weekInfo.weekName}.`,
+    text: `Let's log your capacity for ${resolvedWeekInfo.weekName}${weekLabel}.`,
     blocks: [
       {
         type: 'section',
         text: {
           type: 'mrkdwn',
-          text: `Let's log your capacity for *${weekInfo.weekName}* (${weekInfo.start} – ${weekInfo.end}). Type *cancel* anytime to stop.`,
+          text: `Let's log your capacity for *${resolvedWeekInfo.weekName}* (${resolvedWeekInfo.start} – ${resolvedWeekInfo.end})${weekLabel}. Type *cancel* anytime to stop.`,
         },
       },
     ],
@@ -1237,16 +1286,33 @@ if (app) {
   app.command('/capacity-ping', async ({ ack, body, respond, logger }) => {
     await ack();
     try {
-      const trimmed = body.text?.trim();
+      const trimmed = body.text?.trim() || '';
       if (trimmed === 'broadcast') {
         await sendCapacityPrompts();
         await respond('Sent the capacity reminders.');
       } else {
+        let weekInfoOverride = null;
+        if (trimmed) {
+          weekInfoOverride = parseWeekArgument(trimmed);
+          if (!weekInfoOverride) {
+            await respond(
+              'Unknown argument. Use `/capacity-ping`, `/capacity-ping broadcast`, or `/capacity-ping KW 45 [2025]`.'
+            );
+            return;
+          }
+        }
         await startCapacityConversation({
           userId: body.user_id,
           channelId: null,
+          weekInfo: weekInfoOverride,
         });
-        await respond('Check your DM to answer the questions.');
+        if (weekInfoOverride) {
+          await respond(
+            `Opened the capacity chat for ${weekInfoOverride.weekName}. Check your DM.`
+          );
+        } else {
+          await respond('Check your DM to answer the questions.');
+        }
       }
     } catch (error) {
       logger?.error?.(error);
