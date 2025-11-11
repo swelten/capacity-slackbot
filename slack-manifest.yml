@@ -7,6 +7,10 @@ features:
   bot_user:
     display_name: capacity-slackbot
     always_online: true
+  app_home:
+    home_tab_enabled: false
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
   slash_commands:
     - command: /capacity-ping
       url: https://yi5vs7ozb5tggptffbm67iv43e0wysgo.lambda-url.eu-central-1.on.aws/slack/events

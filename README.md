@@ -34,6 +34,7 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 - **Scheduled DM** – Every Monday at 10:00 (via EventBridge) the bot DM’s each target user with the reminder text and button. Clicking the button starts the guided DM chat.
 - **`/capacity-ping` slash command** – Without arguments it starts the same chat for the command user (handy for ad-hoc edits). Run `/capacity-ping broadcast` to trigger the reminder DM immediately for everyone (mirrors the EventBridge run).
 - **Chat flow** – The bot walks each user through the same three logical steps (base data → task/category hours → project hours) inside the DM. Every answer is captured in real time; once the last question is answered the entry is written to Notion, extra project pages are created/archived as needed, and the user receives a confirmation DM.
+- *Note:* The Slack manifest enables the App Home “Messages” tab so teammates can reply to the bot in DMs. Re-install the app after deploying the new manifest to apply this change.
 
 ### Scheduling
 
