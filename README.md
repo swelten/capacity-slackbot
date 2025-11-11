@@ -26,6 +26,8 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 | `NOTION_API_TOKEN` | Internal integration token with access to both Notion databases. |
 | `NOTION_CAPACITY_DB_ID` | Database ID of “Kapazitätsplan Alle Database (NEU)” (where weekly entries are stored). |
 | `NOTION_PROJECTS_DB_ID` | Database ID of “Alle Projekte Database” used to populate the project multi-select. |
+| `CONVERSATION_TABLE` | DynamoDB table name that stores in-progress conversations (`channelId` primary key, TTL on `expiresAt`). |
+| `CONVERSATION_TTL_SECONDS` | *(Optional)* TTL in seconds for conversation rows (defaults to 3600 = 1 hour). |
 
 > ⚠️ The Notion databases must be shared with the integration connected to `NOTION_API_TOKEN`.
 
@@ -35,6 +37,7 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 - **`/capacity-ping` slash command** – Without arguments it starts the same chat for the command user (handy for ad-hoc edits). Run `/capacity-ping broadcast` to trigger the reminder DM immediately for everyone (mirrors the EventBridge run).
 - **Chat flow** – The bot walks each user through the same three logical steps (base data → task/category hours → project hours) inside the DM. Every answer is captured in real time; once the last question is answered the entry is written to Notion, extra project pages are created/archived as needed, and the user receives a confirmation DM.
 - *Note:* The Slack manifest enables the App Home “Messages” tab so teammates can reply to the bot in DMs. Re-install the app after deploying the new manifest to apply this change.
+- *Persistence:* Conversation progress is stored in DynamoDB (see `CONVERSATION_TABLE`) so users can pause mid-flow without losing their answers. Enable DynamoDB TTL on the table to clean up abandoned sessions automatically.
 
 ### Scheduling
 

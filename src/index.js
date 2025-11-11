@@ -3,6 +3,13 @@ const { WebClient } = require('@slack/web-api');
 const { Client: NotionClient } = require('@notionhq/client');
 const { DateTime } = require('luxon');
 
+let AWS;
+try {
+  AWS = require('aws-sdk');
+} catch {
+  AWS = null;
+}
+
 const signingSecret = process.env.SLACK_SIGNING_SECRET;
 const botToken = process.env.SLACK_BOT_TOKEN;
 
@@ -10,6 +17,9 @@ const notionToken = process.env.NOTION_API_TOKEN;
 const notionCapacityDbId = process.env.NOTION_CAPACITY_DB_ID;
 const notionProjectsDbId = process.env.NOTION_PROJECTS_DB_ID;
 const timezone = process.env.CAPACITY_TIMEZONE || 'Europe/Berlin';
+const conversationTable = process.env.CONVERSATION_TABLE || '';
+const conversationTtlSeconds =
+  Number.parseInt(process.env.CONVERSATION_TTL_SECONDS || '', 10) || 3600;
 
 const awsLambdaReceiver = signingSecret
   ? new AwsLambdaReceiver({ signingSecret })
@@ -25,6 +35,13 @@ const app = awsLambdaReceiver
 
 const slackClient = botToken ? new WebClient(botToken) : null;
 const notionClient = notionToken ? new NotionClient({ auth: notionToken }) : null;
+if (conversationTable && !AWS) {
+  throw new Error(
+    'aws-sdk module is required when CONVERSATION_TABLE is set. Install aws-sdk or remove the env var.'
+  );
+}
+const dynamoClient =
+  conversationTable && AWS ? new AWS.DynamoDB.DocumentClient() : null;
 
 const configuredTargets = (process.env.CAPACITY_TARGETS || '')
   .split(',')
@@ -72,6 +89,93 @@ const mandatoryFieldLabels = new Map(
 const developerFieldLabels = new Map(
   DEVELOPER_FIELDS.map((field) => [field.id, field.label])
 );
+
+function getConversationTtl() {
+  const base = Math.floor(Date.now() / 1000);
+  const ttl = Number.isFinite(conversationTtlSeconds)
+    ? conversationTtlSeconds
+    : 3600;
+  return base + Math.max(ttl, 300);
+}
+
+async function loadConversation(channelId) {
+  if (!channelId) {
+    return null;
+  }
+
+  const cached = activeConversations.get(channelId);
+  if (cached) {
+    return cached;
+  }
+
+  if (!dynamoClient) {
+    return null;
+  }
+
+  const response = await dynamoClient
+    .get({
+      TableName: conversationTable,
+      Key: { channelId },
+    })
+    .promise();
+
+  const state = response.Item?.state;
+  if (!state) {
+    return null;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(state);
+  } catch {
+    return null;
+  }
+
+  parsed.channelId = channelId;
+  activeConversations.set(channelId, parsed);
+  return parsed;
+}
+
+async function saveConversation(conversation) {
+  if (!conversation || !conversation.channelId) {
+    return;
+  }
+
+  activeConversations.set(conversation.channelId, conversation);
+  if (!dynamoClient) {
+    return;
+  }
+
+  const payload = JSON.stringify(conversation);
+  await dynamoClient
+    .put({
+      TableName: conversationTable,
+      Item: {
+        channelId: conversation.channelId,
+        state: payload,
+        expiresAt: getConversationTtl(),
+      },
+    })
+    .promise();
+}
+
+async function deleteConversationState(channelId) {
+  if (!channelId) {
+    return;
+  }
+
+  activeConversations.delete(channelId);
+  if (!dynamoClient) {
+    return;
+  }
+
+  await dynamoClient
+    .delete({
+      TableName: conversationTable,
+      Key: { channelId },
+    })
+    .promise();
+}
 
 function assertSlackClient() {
   if (!slackClient) {
@@ -370,10 +474,6 @@ async function ensureDmChannel(userId, preferredChannelId = null) {
   return dm.channel.id;
 }
 
-function resetConversation(channelId) {
-  activeConversations.delete(channelId);
-}
-
 async function notifyStaleConversation(userId, channelId) {
   try {
     const targetChannel = channelId || (await ensureDmChannel(userId));
@@ -391,7 +491,7 @@ async function startCapacityConversation({ userId, channelId }) {
   assertNotionConfig();
 
   const dmChannelId = await ensureDmChannel(userId, channelId);
-  resetConversation(dmChannelId);
+  await deleteConversationState(dmChannelId);
 
   let people;
   let projects;
@@ -434,7 +534,7 @@ async function startCapacityConversation({ userId, channelId }) {
     state: 'awaiting_person',
   };
 
-  activeConversations.set(dmChannelId, conversation);
+  await saveConversation(conversation);
 
   await slackClient.chat.postMessage({
     channel: dmChannelId,
@@ -455,6 +555,7 @@ async function startCapacityConversation({ userId, channelId }) {
 
 async function promptPersonSelection(conversation) {
   conversation.state = 'awaiting_person';
+  await saveConversation(conversation);
   const options = conversation.people.map((person) => ({
     text: {
       type: 'plain_text',
@@ -489,6 +590,7 @@ async function promptPersonSelection(conversation) {
 
 async function promptContractHours(conversation) {
   conversation.state = 'awaiting_contract_hours';
+  await saveConversation(conversation);
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
     text:
@@ -498,6 +600,7 @@ async function promptContractHours(conversation) {
 
 async function promptMandatorySelection(conversation) {
   conversation.state = 'awaiting_mandatory_selection';
+  await saveConversation(conversation);
   const selectedLabels = conversation.mandatorySelections.map((id) =>
     getFieldLabel(mandatoryFieldLabels, id)
   );
@@ -569,6 +672,7 @@ async function promptNextMandatoryHours(conversation) {
   }
 
   conversation.state = 'awaiting_mandatory_hours';
+  await saveConversation(conversation);
   const label = getFieldLabel(mandatoryFieldLabels, fieldId);
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
@@ -578,6 +682,7 @@ async function promptNextMandatoryHours(conversation) {
 
 async function promptDeveloperQuestion(conversation) {
   conversation.state = 'awaiting_developer_choice';
+  await saveConversation(conversation);
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
     text: 'Are you a developer?',
@@ -613,6 +718,7 @@ async function promptNextDeveloperHours(conversation) {
   }
 
   conversation.state = 'awaiting_developer_hours';
+  await saveConversation(conversation);
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
     text: `Hours for *${field.label}*? Reply with a number or type *skip* to keep it empty.`,
@@ -621,6 +727,7 @@ async function promptNextDeveloperHours(conversation) {
 
 async function promptProjectSelection(conversation) {
   conversation.state = 'awaiting_project_selection';
+  await saveConversation(conversation);
   if (!conversation.projects.length) {
     await slackClient.chat.postMessage({
       channel: conversation.channelId,
@@ -700,6 +807,7 @@ async function promptNextProjectHours(conversation) {
   }
 
   conversation.state = 'awaiting_project_hours';
+  await saveConversation(conversation);
   await slackClient.chat.postMessage({
     channel: conversation.channelId,
     text: `How many hours did you work on *${currentProject.name}*? Reply with a number.`,
@@ -730,7 +838,7 @@ async function finalizeConversation(conversation) {
     });
     throw error;
   } finally {
-    resetConversation(conversation.channelId);
+    await deleteConversationState(conversation.channelId);
   }
 }
 
@@ -778,7 +886,7 @@ async function cancelConversation(conversation) {
     channel: conversation.channelId,
     text: 'Conversation cancelled. Start again with /capacity-ping when ready.',
   });
-  resetConversation(conversation.channelId);
+  await deleteConversationState(conversation.channelId);
 }
 
 async function handleConversationText(conversation, rawText = '') {
@@ -807,12 +915,14 @@ async function handleConversationText(conversation, rawText = '') {
         conversation.mandatorySelections = [];
         conversation.mandatoryValues = {};
         conversation.currentMandatoryIndex = 0;
+        await saveConversation(conversation);
         await promptDeveloperQuestion(conversation);
         return;
       }
       if (['done', 'finish', 'next'].includes(lower)) {
         conversation.mandatoryValues = {};
         conversation.currentMandatoryIndex = 0;
+        await saveConversation(conversation);
         if (conversation.mandatorySelections.length) {
           await promptNextMandatoryHours(conversation);
         } else {
@@ -824,6 +934,7 @@ async function handleConversationText(conversation, rawText = '') {
         conversation.mandatorySelections = [];
         conversation.mandatoryValues = {};
         conversation.currentMandatoryIndex = 0;
+        await saveConversation(conversation);
         await slackClient.chat.postMessage({
           channel: conversation.channelId,
           text: 'Cleared the selected business areas.',
@@ -844,6 +955,7 @@ async function handleConversationText(conversation, rawText = '') {
         text: trimmed,
         onSuccess: async (value) => {
           conversation.contractHours = value;
+          await saveConversation(conversation);
           await promptMandatorySelection(conversation);
         },
       });
@@ -861,6 +973,7 @@ async function handleConversationText(conversation, rawText = '') {
         onSuccess: async (value) => {
           conversation.mandatoryValues[fieldId] = value;
           conversation.currentMandatoryIndex += 1;
+          await saveConversation(conversation);
           await promptNextMandatoryHours(conversation);
         },
       });
@@ -880,6 +993,7 @@ async function handleConversationText(conversation, rawText = '') {
         onSuccess: async (value) => {
           conversation.developerValues[field.id] = value;
           conversation.currentDeveloperIndex += 1;
+          await saveConversation(conversation);
           await promptNextDeveloperHours(conversation);
         },
       });
@@ -899,6 +1013,7 @@ async function handleConversationText(conversation, rawText = '') {
         onSuccess: async (value) => {
           conversation.projectHours[currentProject.id] = value;
           conversation.currentProjectIndex += 1;
+          await saveConversation(conversation);
           await promptNextProjectHours(conversation);
         },
       });
@@ -910,12 +1025,14 @@ async function handleConversationText(conversation, rawText = '') {
         conversation.projectsSelected = [];
         conversation.projectHours = {};
         conversation.currentProjectIndex = 0;
+        await saveConversation(conversation);
         await finalizeConversation(conversation);
         return;
       }
       if (['done', 'finish', 'next'].includes(lower)) {
         conversation.projectHours = {};
         conversation.currentProjectIndex = 0;
+        await saveConversation(conversation);
         if (conversation.projectsSelected.length) {
           await promptNextProjectHours(conversation);
         } else {
@@ -927,6 +1044,7 @@ async function handleConversationText(conversation, rawText = '') {
         conversation.projectsSelected = [];
         conversation.projectHours = {};
         conversation.currentProjectIndex = 0;
+        await saveConversation(conversation);
         await slackClient.chat.postMessage({
           channel: conversation.channelId,
           text: 'Cleared selected projects.',
@@ -1140,9 +1258,7 @@ if (app) {
       await ack();
       try {
         const channelId = body.channel?.id;
-        const conversation = channelId
-          ? activeConversations.get(channelId)
-          : null;
+        const conversation = await loadConversation(channelId);
         if (!conversation || conversation.userId !== body.user?.id) {
           await notifyStaleConversation(body.user?.id, channelId);
           return;
@@ -1158,6 +1274,7 @@ if (app) {
         }
 
         conversation.personId = selected;
+        await saveConversation(conversation);
         await promptContractHours(conversation);
       } catch (error) {
         logger?.error?.(error);
@@ -1171,9 +1288,7 @@ if (app) {
       await ack();
       try {
         const channelId = body.channel?.id;
-        const conversation = channelId
-          ? activeConversations.get(channelId)
-          : null;
+        const conversation = await loadConversation(channelId);
         if (!conversation || conversation.userId !== body.user?.id) {
           await notifyStaleConversation(body.user?.id, channelId);
           return;
@@ -1189,6 +1304,7 @@ if (app) {
           conversation.mandatorySelections = [];
           conversation.mandatoryValues = {};
           conversation.currentMandatoryIndex = 0;
+          await saveConversation(conversation);
           await slackClient.chat.postMessage({
             channel: conversation.channelId,
             text: 'Cleared the selected business areas.',
@@ -1200,6 +1316,7 @@ if (app) {
         if (value === SELECT_SPECIAL_VALUES.DONE) {
           conversation.mandatoryValues = {};
           conversation.currentMandatoryIndex = 0;
+          await saveConversation(conversation);
           if (conversation.mandatorySelections.length) {
             await promptNextMandatoryHours(conversation);
           } else {
@@ -1218,6 +1335,7 @@ if (app) {
         }
 
         conversation.mandatorySelections.push(value);
+        await saveConversation(conversation);
         await slackClient.chat.postMessage({
           channel: conversation.channelId,
           text: `Added *${getFieldLabel(mandatoryFieldLabels, value)}*. Select more or choose *Done selecting*.`,
@@ -1235,9 +1353,7 @@ if (app) {
       await ack();
       try {
         const channelId = body.channel?.id;
-        const conversation = channelId
-          ? activeConversations.get(channelId)
-          : null;
+        const conversation = await loadConversation(channelId);
         if (!conversation || conversation.userId !== body.user?.id) {
           await notifyStaleConversation(body.user?.id, channelId);
           return;
@@ -1247,6 +1363,7 @@ if (app) {
         conversation.isDeveloper = selectedValue === 'yes';
         conversation.developerValues = {};
         conversation.currentDeveloperIndex = 0;
+        await saveConversation(conversation);
 
         if (conversation.isDeveloper) {
           await promptNextDeveloperHours(conversation);
@@ -1265,9 +1382,7 @@ if (app) {
       await ack();
       try {
         const channelId = body.channel?.id;
-        const conversation = channelId
-          ? activeConversations.get(channelId)
-          : null;
+        const conversation = await loadConversation(channelId);
         if (!conversation || conversation.userId !== body.user?.id) {
           await notifyStaleConversation(body.user?.id, channelId);
           return;
@@ -1283,6 +1398,7 @@ if (app) {
           conversation.projectsSelected = [];
           conversation.projectHours = {};
           conversation.currentProjectIndex = 0;
+          await saveConversation(conversation);
           await slackClient.chat.postMessage({
             channel: conversation.channelId,
             text: 'Cleared selected projects.',
@@ -1294,6 +1410,7 @@ if (app) {
         if (value === SELECT_SPECIAL_VALUES.DONE) {
           conversation.projectHours = {};
           conversation.currentProjectIndex = 0;
+          await saveConversation(conversation);
           if (conversation.projectsSelected.length) {
             await promptNextProjectHours(conversation);
           } else {
@@ -1321,6 +1438,7 @@ if (app) {
           };
 
         conversation.projectsSelected.push(project);
+        await saveConversation(conversation);
         await slackClient.chat.postMessage({
           channel: conversation.channelId,
           text: `Added project *${project.name}*. Select more or choose *Done selecting projects*.`,
@@ -1344,7 +1462,7 @@ if (app) {
         return;
       }
 
-      const conversation = activeConversations.get(message.channel);
+      const conversation = await loadConversation(message.channel);
       if (!conversation || conversation.userId !== message.user) {
         return;
       }
