@@ -6,6 +6,7 @@ RUN npm install --omit=dev
 
 # Copy application source
 COPY src/ ./src/
+COPY unicorn.png ./unicorn.png
 
 # Lambda entrypoint
 CMD ["src/index.handler"]
