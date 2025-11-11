@@ -26,6 +26,7 @@ capacity-slackbot is an AWS Lambda Slack app that reminds every teammate to subm
 | `NOTION_API_TOKEN` | Internal integration token with access to both Notion databases. |
 | `NOTION_CAPACITY_DB_ID` | Database ID of “Kapazitätsplan Alle Database (NEU)” (where weekly entries are stored). |
 | `NOTION_PROJECTS_DB_ID` | Database ID of “Alle Projekte Database” used to populate the project multi-select. |
+| `NOTION_CAPACITY_URL` | Public/Share link to the Notion capacity database shown in the final confirmation message. Defaults to the Floodwaive link. |
 | `CONVERSATION_TABLE` | DynamoDB table name that stores in-progress conversations (`channelId` primary key, TTL on `expiresAt`). |
 | `CONVERSATION_TTL_SECONDS` | *(Optional)* TTL in seconds for conversation rows (defaults to 3600 = 1 hour). |
 

@@ -19,6 +19,9 @@ const notionToken = process.env.NOTION_API_TOKEN;
 const notionCapacityDbId = process.env.NOTION_CAPACITY_DB_ID;
 const notionProjectsDbId = process.env.NOTION_PROJECTS_DB_ID;
 const timezone = process.env.CAPACITY_TIMEZONE || 'Europe/Berlin';
+const notionCapacityUrl =
+  process.env.NOTION_CAPACITY_URL ||
+  'https://www.notion.so/floodwaive/2a763285cfff80cd91a4f9088b0417f3?v=2a763285cfff812fa661000c84f74dec';
 const conversationTable = process.env.CONVERSATION_TABLE || '';
 const conversationTtlSeconds =
   Number.parseInt(process.env.CONVERSATION_TTL_SECONDS || '', 10) || 3600;
@@ -84,8 +87,13 @@ const DEVELOPER_FIELDS = [
 ];
 
 const activeConversations = new Map();
-const unicornImagePath = path.join(__dirname, '..', 'unicorn.png');
-let unicornImageCache = null;
+const celebrationImages = [
+  path.join(__dirname, '..', 'unicorn.png'),
+  path.join(__dirname, '..', 'giraffe.png'),
+  path.join(__dirname, '..', 'quokka.png'),
+  path.join(__dirname, '..', 'platypus.png'),
+];
+const celebrationCache = new Map();
 
 const mandatoryFieldLabels = new Map(
   MANDATORY_FIELDS.map((field) => [field.id, field.label])
@@ -181,16 +189,30 @@ async function deleteConversationState(channelId) {
     .promise();
 }
 
-async function loadUnicornImage() {
-  if (unicornImageCache) {
-    return unicornImageCache;
+function pickCelebrationImage() {
+  if (!celebrationImages.length) {
+    return null;
+  }
+  const index = Math.floor(Math.random() * celebrationImages.length);
+  return celebrationImages[index];
+}
+
+async function loadCelebrationImage(imagePath) {
+  if (!imagePath) {
+    return null;
+  }
+
+  if (celebrationCache.has(imagePath)) {
+    return celebrationCache.get(imagePath);
   }
 
   try {
-    unicornImageCache = await fs.promises.readFile(unicornImagePath);
-    return unicornImageCache;
+    const buffer = await fs.promises.readFile(imagePath);
+    celebrationCache.set(imagePath, buffer);
+    return buffer;
   } catch (error) {
-    console.error('Failed to read unicorn image', error);
+    console.error('Failed to read celebration image', error);
+    celebrationCache.delete(imagePath);
     return null;
   }
 }
@@ -201,14 +223,16 @@ async function sendCelebrationImage(channelId) {
   }
 
   try {
-    const imageBuffer = await loadUnicornImage();
+    const imagePath = pickCelebrationImage();
+    const imageBuffer = await loadCelebrationImage(imagePath);
     if (!imageBuffer) {
       return;
     }
 
+    const filename = path.basename(imagePath || 'celebration.png');
     await slackClient.files.uploadV2({
       channel_id: channelId,
-      filename: 'capacity-unicorn.png',
+      filename,
       file: imageBuffer,
       title: 'Capacity saved!',
     });
@@ -906,6 +930,12 @@ async function promptNextProjectHours(conversation) {
 }
 
 async function finalizeConversation(conversation) {
+  if (conversation.completed) {
+    return;
+  }
+
+  conversation.completed = true;
+  await saveConversation(conversation);
   conversation.state = 'saving';
   try {
     await saveCapacityToNotion({
@@ -920,7 +950,7 @@ async function finalizeConversation(conversation) {
     });
     await slackClient.chat.postMessage({
       channel: conversation.channelId,
-      text: 'Capacity saved. Thank you!',
+      text: `Capacity saved. Thank you! → ${notionCapacityUrl}`,
     });
     await sendCelebrationImage(conversation.channelId);
   } catch (error) {
