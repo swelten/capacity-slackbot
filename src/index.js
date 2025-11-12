@@ -72,11 +72,11 @@ const SELECT_SPECIAL_VALUES = {
 const MANDATORY_FIELDS = [
   { id: 'Marketing', label: 'Marketing' },
   { id: 'Management', label: 'Management' },
-  { id: 'Akquise', label: 'Akquise' },
-  { id: 'Finanzen', label: 'Finanzen' },
+  { id: 'Acqusition', label: 'Acqusition' },
+  { id: 'Finance', label: 'Finance' },
   { id: 'HR', label: 'HR' },
   { id: 'Study', label: 'Study' },
-  { id: 'Regelmäßige Aufgaben(Mails...)', label: 'Regelmäßige Aufgaben (Mails, etc.)' },
+  { id: 'Recurring Tasks (Mails...)', label: 'Recurring Tasks (Mails, etc.)' },
 ];
 
 const DEVELOPER_FIELDS = [
@@ -1245,10 +1245,10 @@ async function createAdditionalProjectEntry({
           end: weekInfo.end,
         },
       },
-      Projekt: {
+      Project: {
         relation: [{ id: project.id }],
       },
-      'Stunden Projekt': {
+      'Hours Project': {
         number: hours,
       },
     },
@@ -1309,12 +1309,12 @@ async function saveCapacityToNotion(metadata) {
   }
 
   if (!projects.length) {
-    properties.Projekt = { relation: [] };
-    properties['Stunden Projekt'] = { number: null };
+    properties.Project = { relation: [] };
+    properties['Hours Project'] = { number: null };
   } else {
     const first = projects[0];
-    properties.Projekt = { relation: [{ id: first.id }] };
-    properties['Stunden Projekt'] = {
+    properties.Project = { relation: [{ id: first.id }] };
+    properties['Hours Project'] = {
       number: projectHours[first.id] ?? null,
     };
   }
@@ -1573,7 +1573,7 @@ if (app) {
         const project =
           projectLookup.get(value) || {
             id: value,
-            name: action?.selected_option?.text?.text || 'Projekt',
+            name: action?.selected_option?.text?.text || 'Project',
           };
 
         conversation.projectsSelected.push(project);
