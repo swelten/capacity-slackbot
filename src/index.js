@@ -72,6 +72,7 @@ const SELECT_SPECIAL_VALUES = {
 const MANDATORY_FIELDS = [
   { id: 'Marketing', label: 'Marketing' },
   { id: 'Management', label: 'Management' },
+  { id: 'Development', label: 'Development' },
   { id: 'Acqusition', label: 'Acqusition' },
   { id: 'Finance', label: 'Finance' },
   { id: 'HR', label: 'HR' },
